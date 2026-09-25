@@ -11,15 +11,12 @@ export function getWorkspacesFilePath(): string {
 
 function getDefaultWorkspace(): WorkspaceItem {
   const cwd = process.cwd();
-  const parentDir = path.resolve(cwd, "..");
-  const isInsideAt = path.basename(cwd) === "at" || path.basename(cwd) === "allonomic";
-  const defaultPath = isInsideAt ? parentDir : cwd;
-  const defaultName = path.basename(defaultPath) || "allonomic";
+  const defaultName = path.basename(cwd) || "default-workspace";
 
   return {
     id: "proj-1",
     name: defaultName,
-    path: defaultPath,
+    path: cwd,
     lastOpened: new Date().toISOString(),
   };
 }

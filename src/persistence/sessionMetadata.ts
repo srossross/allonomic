@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 import type { SessionMetadata } from "../types/persistence";
-import type { ThinkingLevel } from "../types/chat";
+import { type ThinkingLevel, DEFAULT_MODEL_ID } from "../types/chat";
 import { INITIAL_TOOLS } from "../types/tab";
 
 export function getSessionMetadataPath(workspaceDir: string, sessionId: string): string {
@@ -49,8 +49,8 @@ export async function loadSessionMetadata(
       closed: Boolean(closed ?? false),
       createdAt: typeof created_at === "string" ? created_at : typeof createdAt === "string" ? createdAt : new Date().toISOString(),
       updatedAt: typeof updated_at === "string" ? updated_at : typeof updatedAt === "string" ? updatedAt : new Date().toISOString(),
-      model: typeof model === "string" ? model : "gemini-2.5-flash",
-      thinkingLevel: isThinkingLevel(thinking_level) ? thinking_level : "High",
+      model: typeof model === "string" ? model : DEFAULT_MODEL_ID,
+      thinkingLevel: isThinkingLevel(thinking_level) ? thinking_level : "Low",
       enabledTools: toStringArray(enabled_tools),
       turnCount: typeof turn_count === "number" ? turn_count : undefined,
       lastPrompt: typeof last_prompt === "string" ? last_prompt : undefined,
@@ -73,8 +73,8 @@ export async function saveSessionMetadata(
     closed: metadata.closed,
     created_at: metadata.createdAt,
     updated_at: metadata.updatedAt || new Date().toISOString(),
-    model: metadata.model || "gemini-2.5-flash",
-    thinking_level: metadata.thinkingLevel || "High",
+    model: metadata.model || DEFAULT_MODEL_ID,
+    thinking_level: metadata.thinkingLevel || "Low",
     enabled_tools: metadata.enabledTools || INITIAL_TOOLS,
     turn_count: metadata.turnCount ?? 0,
     last_prompt: metadata.lastPrompt || "",

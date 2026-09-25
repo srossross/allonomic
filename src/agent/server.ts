@@ -4,6 +4,7 @@ import { AgentRunner } from "../interceptor-agents/pipeline/runner";
 import { GovernorInterceptor } from "../interceptor-agents/governor/interceptor";
 import {
   extractAssistantText,
+  extractTurnSteps,
   extractContextMessages,
   extractTurnToolCalls,
   buildTurnEvents,
@@ -30,12 +31,7 @@ export function getAgentInstance(
   sessionId?: string,
   initialTurnIndex?: number
 ): AgentInstance {
-  const defaultWorkspace = path.resolve(process.cwd(), "../toy-test-01");
-  const effectiveWorkspace = workspaceDir
-    ? path.resolve(workspaceDir)
-    : fs.existsSync(defaultWorkspace)
-      ? defaultWorkspace
-      : process.cwd();
+  const effectiveWorkspace = workspaceDir ? path.resolve(workspaceDir) : process.cwd();
 
   const effectiveSessionId = sessionId || "default-session";
   const key = getSessionKey(effectiveWorkspace, effectiveSessionId);
@@ -87,7 +83,13 @@ export interface RunAgentPromptOptions {
   modelName?: string;
   thinkingBudget?: number;
   executionMode?: ExecutionMode;
-  history?: Array<{ role: string; content: string }>;
+  history?: Array<{
+    role: string;
+    content: string;
+    tool_calls?: Record<string, unknown>[];
+    tool_call_id?: string;
+    name?: string;
+  }>;
 }
 
 export async function runAgentPrompt(
@@ -113,7 +115,7 @@ export async function runAgentPrompt(
     prompt,
     workspaceDir,
     enabledTools: tools,
-    modelName: model = "gemini-2.5-flash",
+    modelName: model = "gemini-3.8-flash",
     thinkingBudget: budget,
     executionMode,
     history,
@@ -135,8 +137,11 @@ export async function runAgentPrompt(
   if (tools && Array.isArray(tools)) {
     runner.setEnabledTools(tools);
   }
-  const effectiveThinkingBudget = budget === undefined ? 8192 : budget;
+  const effectiveThinkingBudget = budget === undefined ? 1024 : budget;
   runner.setModelAndThinking(model, effectiveThinkingBudget);
+  if (model && typeof governor.setModelName === "function") {
+    governor.setModelName(model);
+  }
 
   const { result, thinking, retries, turnIndex, pipelineContext } = await runner.run(
     prompt,
@@ -149,6 +154,7 @@ export async function runAgentPrompt(
   const assistantText = extractAssistantText(messages);
   const contextMessages = extractContextMessages(messages);
   const turnToolCalls = extractTurnToolCalls(messages);
+  const turnSteps = extractTurnSteps(messages);
 
   const turnEvents = buildTurnEvents({
     prompt,
@@ -171,7 +177,7 @@ export async function runAgentPrompt(
       createdAt: existingMeta?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       model,
-      thinkingLevel: existingMeta?.thinkingLevel || "High",
+      thinkingLevel: existingMeta?.thinkingLevel || "Low",
       enabledTools: tools || existingMeta?.enabledTools,
       turnCount: turnIndex,
       lastPrompt: prompt,
@@ -182,9 +188,72 @@ export async function runAgentPrompt(
   }
 
   return {
-    assistantMessage:
-      assistantText ||
-      (turnToolCalls.some((t) => t.status === "pending") ? "" : "Task processed."),
+    turnSteps,
+    assistantMessage: assistantText || "",
+    thinking: thinking || undefined,
+    thinkingDurationSeconds: thinking ? thinkingDurationSeconds : undefined,
+    toolCalls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
+    governorState: governor.state,
+    contextMessages,
+    turnEvents,
+  };
+}
+
+export async function resumeAgentPrompt(
+  threadId: string,
+  sessionId: string,
+  workspaceDir: string | undefined,
+  toolId: string,
+  resultString: string
+) {
+  const startTime = Date.now();
+  const { runner, governor, workspaceDir: effectiveWorkspace } = getAgentInstance(
+    workspaceDir,
+    sessionId
+  );
+
+  // 1. Update the state in the checkpointer
+  await runner.resumeTool(threadId, toolId, resultString);
+
+  // 2. Resume the runner by passing null for the prompt
+  const { result, thinking, retries, turnIndex, pipelineContext } = await runner.run(
+    null,
+    threadId,
+    {}
+  );
+
+  const thinkingDurationSeconds = Math.max(1, Math.round((Date.now() - startTime) / 1000));
+  const messages = result.messages || [];
+  const assistantText = extractAssistantText(messages);
+  const contextMessages = extractContextMessages(messages);
+  const turnToolCalls = extractTurnToolCalls(messages);
+  const turnSteps = extractTurnSteps(messages);
+
+  const turnEvents = buildTurnEvents({
+    prompt: "(Resumed)",
+    threadId,
+    governorName: governor.name || "Governor",
+    messages,
+    pipelineContext,
+    thinking,
+    retries,
+    turnIndex,
+  });
+
+  try {
+    const existingMeta = await loadSessionMetadata(effectiveWorkspace, sessionId);
+    if (existingMeta) {
+      existingMeta.updatedAt = new Date().toISOString();
+      existingMeta.turnCount = turnIndex;
+      await saveSessionMetadata(effectiveWorkspace, existingMeta);
+    }
+  } catch (error) {
+    console.warn(`[AgentServer] Failed to save session metadata:`, error);
+  }
+
+  return {
+    turnSteps,
+    assistantMessage: assistantText || "",
     thinking: thinking || undefined,
     thinkingDurationSeconds: thinking ? thinkingDurationSeconds : undefined,
     toolCalls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
@@ -221,7 +290,7 @@ export function getInstalledInjectors(workspaceDir?: string, sessionId?: string)
       name: governor.name || "Governor",
       type: "Pipeline Interceptor",
       status: "active",
-      modelName: "gemini-2.5-flash",
+      modelName: governor.getModelName?.() || "gemini-3.8-flash",
       description:
         "Monitors and intercepts agent actions across execution phases to enforce policy, constraints, and goal satisfaction verification.",
       phases: [

@@ -3,7 +3,7 @@ export interface ReframeOptions {
   modelName?: string;
 }
 
-const DEFAULT_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_MODEL = "gemini-3.8-flash";
 
 const PROMPT = `Reframe the given user intent into a satisfaction condition of 10 words or less for display in a UI.
 

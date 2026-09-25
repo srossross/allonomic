@@ -75,7 +75,7 @@ export function ProjectsSidebar({
       />
 
       {/* Project Flat List */}
-      <div className="flex-1 space-y-0.5 overflow-y-auto p-1.5">
+      <div className="flex-1 overflow-y-auto">
         {projects.length === 0 ? (
           <div className="text-muted-foreground p-3 text-[11px] italic">No projects opened.</div>
         ) : (
@@ -86,18 +86,23 @@ export function ProjectsSidebar({
                 key={proj.id}
                 type="button"
                 onClick={() => onSelectProject(proj.id)}
-                className={`flex w-full cursor-pointer items-center gap-2 rounded-xs px-2 py-1.5 text-left text-xs transition-colors ${
+                className={`group flex w-full cursor-pointer flex-col items-start gap-1 border-b border-border/40 px-3 py-2.5 text-left transition-colors ${
                   isActive
                     ? "bg-muted/70 text-foreground font-medium"
                     : "text-muted-foreground hover:bg-muted/30 hover:text-foreground"
                 }`}
               >
-                <Folder
-                  className={`size-3.5 shrink-0 ${
-                    isActive ? "text-primary" : "text-muted-foreground/70"
-                  }`}
-                />
-                <span className="flex-1 truncate">{proj.name}</span>
+                <div className="flex w-full items-center gap-2 text-xs">
+                  <Folder
+                    className={`size-4 shrink-0 ${
+                      isActive ? "text-primary" : "text-muted-foreground/70"
+                    }`}
+                  />
+                  <span className="flex-1 break-words font-semibold">{proj.name}</span>
+                </div>
+                <div className="w-full break-all font-mono text-[10px] leading-tight opacity-60">
+                  {proj.path}
+                </div>
               </button>
             );
           })

@@ -110,4 +110,55 @@ export async function saveTurn(sessionDir: string, data: TurnData): Promise<stri
   return turnDir;
 }
 
+export async function appendTraceLog(sessionDir: string, message: string): Promise<void> {
+  try {
+    await fs.mkdir(sessionDir, { recursive: true });
+    const logPath = path.join(sessionDir, "trace.log");
+    const entry = `[${new Date().toISOString()}] ${message}\n`;
+    await fs.appendFile(logPath, entry, "utf8");
+  } catch (error) {
+    console.warn("[appendTraceLog] Failed to write trace:", error);
+  }
+}
+
+export interface TurnErrorData {
+  turnIndex: number;
+  userPrompt: string;
+  error: unknown;
+  entryToolCalls?: InterceptorActionLog[];
+  preToolLogs?: PreToolLog[];
+  exitToolCalls?: InterceptorActionLog[];
+}
+
+export async function saveTurnError(sessionDir: string, data: TurnErrorData): Promise<string> {
+  const turnString = String(data.turnIndex).padStart(3, "0");
+  const turnDir = path.resolve(sessionDir, "turns", turnString);
+  await fs.mkdir(turnDir, { recursive: true });
+
+  const now = new Date().toISOString();
+
+  // 1. user.yml
+  const userYml = YAML.stringify({
+    prompt: data.userPrompt,
+    timestamp: now,
+  });
+  await fs.writeFile(path.join(turnDir, "user.yml"), userYml, "utf8");
+
+  // 2. error.yml
+  const errorObject = {
+    error: data.error instanceof Error ? data.error.message : String(data.error),
+    stack: data.error instanceof Error ? data.error.stack : undefined,
+    timestamp: now,
+    entryToolCalls: data.entryToolCalls,
+    preToolLogs: data.preToolLogs,
+    exitToolCalls: data.exitToolCalls,
+  };
+  await fs.writeFile(path.join(turnDir, "error.yml"), YAML.stringify(errorObject), "utf8");
+
+  // Also log to trace.log
+  await appendTraceLog(sessionDir, `[ERROR] Turn ${data.turnIndex} failed: ${errorObject.error}`);
+
+  return turnDir;
+}
+
 export { resumeFromDir, type ResumeResult } from "./sessionReplay";

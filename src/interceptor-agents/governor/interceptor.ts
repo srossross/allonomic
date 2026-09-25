@@ -3,6 +3,7 @@ import path from "node:path";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { SystemMessage, HumanMessage, BaseMessage, ToolMessage } from "@langchain/core/messages";
 import { findApiKey } from "../../common/env";
+import { invokeWithRetry } from "../../common/retry";
 import {
   AgentInterceptor,
   ToolCall,
@@ -50,7 +51,7 @@ export class GovernorInterceptor implements AgentInterceptor {
   public constraintsContent: string | null = null;
 
   constructor(options: GovernorInterceptorOptions = {}) {
-    this.modelName = options.modelName ?? "gemini-2.5-flash";
+    this.modelName = options.modelName ?? "gemini-3.8-flash";
     this.apiKey = options.apiKey || findApiKey();
     this.constraintsPath = options.constraintsPath;
     this.state = {
@@ -64,8 +65,6 @@ export class GovernorInterceptor implements AgentInterceptor {
    * Lazily loads agents/CONSTRAINTS.md from the workspace.
    */
   private ensureConstraintsLoaded(workspaceDir: string) {
-    if (this.constraintsContent !== null) return;
-
     const targetPath = this.constraintsPath
       ? path.resolve(workspaceDir, this.constraintsPath)
       : path.resolve(workspaceDir, "agents/CONSTRAINTS.md");
@@ -77,6 +76,14 @@ export class GovernorInterceptor implements AgentInterceptor {
     }
   }
 
+  public setModelName(modelName: string) {
+    this.modelName = modelName;
+  }
+
+  public getModelName(): string {
+    return this.modelName;
+  }
+
   /**
    * Entry Intercept: Runs an isolated mini-agent loop with atomic tools
    * until 'finish' is called to align user intent and constraints.
@@ -85,10 +92,7 @@ export class GovernorInterceptor implements AgentInterceptor {
     if (!this.apiKey) throw new Error("Missing Gemini API key for Governor");
     this.ensureConstraintsLoaded(context.workspaceDir);
 
-    let isFinished = false;
-    const promptTools = createGovernorPromptTools(this.state, () => {
-      isFinished = true;
-    });
+    const promptTools = createGovernorPromptTools(this.state, () => {});
 
     const model = new ChatGoogleGenerativeAI({
       model: this.modelName,
@@ -111,47 +115,26 @@ ${baseConstraints}`;
     // Isolated scratchpad history (discarded on finish)
     const scratchpad: BaseMessage[] = [new SystemMessage(systemPrompt), new HumanMessage(prompt)];
 
-    const maxSteps = 8;
-    let step = 0;
+    const response = await invokeWithRetry(() => model.invoke(scratchpad));
+    
+    if (!response.tool_calls || response.tool_calls.length === 0) return;
 
-    while (!isFinished && step < maxSteps) {
-      step++;
-      const response = await model.invoke(scratchpad);
-      scratchpad.push(response);
+    let callIndex = 0;
+    for (const call of response.tool_calls) {
+      const callId = call.id || `call_${Date.now()}_${callIndex++}`;
+      call.id = callId;
+      const matchingTool = promptTools.find((t) => t.name === call.name);
+      if (!matchingTool) continue;
 
-      if (!response.tool_calls || response.tool_calls.length === 0) {
-        scratchpad.push(
-          new HumanMessage(
-            "Please use push_intent, add_constraint, or finish to finalize the user intent state."
-          )
-        );
-        continue;
+      const result = await matchingTool.invoke(call.args);
+      if (call.name === "push_intent") {
+        const intentId = extractIntentId(result);
+        if (intentId && call.args && typeof call.args === "object") {
+          Reflect.set(call.args, "id", intentId);
+        }
       }
-
-      let callIndex = 0;
-      for (const call of response.tool_calls) {
-        const callId = call.id || `call_${Date.now()}_${callIndex++}`;
-        call.id = callId;
-        const matchingTool = promptTools.find((t) => t.name === call.name);
-        if (!matchingTool) continue;
-
-        const result = await matchingTool.invoke(call.args);
-        if (call.name === "push_intent") {
-          const intentId = extractIntentId(result);
-          if (intentId && call.args && typeof call.args === "object") {
-            Reflect.set(call.args, "id", intentId);
-          }
-        }
-        if (context.entryToolCalls) {
-          context.entryToolCalls.push({ name: call.name, args: call.args });
-        }
-        scratchpad.push(
-          new ToolMessage({
-            content: typeof result === "string" ? result : JSON.stringify(result),
-            tool_call_id: callId,
-            name: call.name,
-          })
-        );
+      if (context.entryToolCalls) {
+        context.entryToolCalls.push({ name: call.name, args: call.args });
       }
     }
   }
@@ -164,11 +147,14 @@ ${baseConstraints}`;
 
     const topIntent = this.state.intent_stack.at(-1);
 
+    const explicitlyMutatingTools = ["write_file", "replace_file_content", "apply_write"];
+    const isMutating = explicitlyMutatingTools.includes(toolCall.name);
+
     // If top intent is question or unknown, disallow mutating tools
     if (
+      isMutating &&
       topIntent &&
-      (topIntent.kind === "question" || topIntent.kind === "unknown") &&
-      (toolCall.name === "write_file" || toolCall.name === "run_command")
+      (topIntent.kind === "question" || topIntent.kind === "unknown")
     ) {
       const reason = `Blocked by Governor: Active user intent is of kind '${topIntent.kind}' ("${topIntent.description}"). Mutating files or executing commands is not permitted for questions or unknown intents.`;
       if (context.preToolLogs) {
@@ -245,12 +231,12 @@ ${baseConstraints}`;
       new HumanMessage(`CONVERSATION TRACE:\n${formattedConversation}`),
     ];
 
-    const maxSteps = 8;
+    const maxSteps = 3;
     let step = 0;
 
     while (verdict === null && step < maxSteps) {
       step++;
-      const response = await model.invoke(scratchpad);
+      const response = await invokeWithRetry(() => model.invoke(scratchpad));
       scratchpad.push(response);
 
       if (!response.tool_calls || response.tool_calls.length === 0) {
@@ -284,7 +270,8 @@ ${baseConstraints}`;
     }
 
     const finalVerdict: { approved: boolean; feedback?: string; nextStep?: string } = verdict ?? {
-      approved: true,
+      approved: false,
+      feedback: "Governor failed to verify exit criteria within the maximum allowed steps. Please explicitly verify intents and constraints.",
     };
     if (finalVerdict.approved) {
       return {
@@ -292,9 +279,10 @@ ${baseConstraints}`;
         nextStep: finalVerdict.nextStep,
       };
     }
+    const contextDetails = `\n\nActive Intents: ${JSON.stringify(this.state.intent_stack)}\nConstraints: ${JSON.stringify(this.state.global_constraints)}\n${this.constraintsContent ? `Base Constraints:\n${this.constraintsContent}` : ""}`;
     return {
       allowFinish: false,
-      feedback: finalVerdict.feedback,
+      feedback: (finalVerdict.feedback || "Agent work was rejected.") + contextDetails,
     };
   }
 }

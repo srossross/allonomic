@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { type Message, type ContextMessage, type ThinkingLevel, type ExecutionMode } from "@/types";
-import { ChatHeader } from "./ChatHeader";
+import {
+  type Message,
+  type ContextMessage,
+  type ThinkingLevel,
+  type ExecutionMode,
+  type ModelOption,
+  DEFAULT_MODEL_ID,
+} from "@/types";
 import { ContextView } from "./ContextView";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { ChatComposer } from "./ChatComposer";
@@ -17,6 +23,7 @@ export interface ChatPanelProps {
   onStopMessage?: () => void;
   selectedModel?: string;
   onSelectModel?: (model: string) => void;
+  models?: ModelOption[];
   thinkingLevel?: ThinkingLevel;
   onSelectThinkingLevel?: (level: ThinkingLevel) => void;
   executionMode?: ExecutionMode;
@@ -30,13 +37,14 @@ export function ChatPanel({
   messages,
   contextMessages = [],
   showContext = false,
-  onToggleContext,
+  onToggleContext: _onToggleContext,
   loading = false,
   onSendMessage,
   onStopMessage,
-  selectedModel = "gemini-2.5-flash",
+  selectedModel = DEFAULT_MODEL_ID,
   onSelectModel,
-  thinkingLevel = "High",
+  models,
+  thinkingLevel = "Low",
   onSelectThinkingLevel,
   executionMode = "manual",
   onSelectExecutionMode,
@@ -90,14 +98,7 @@ export function ChatPanel({
   })();
 
   return (
-    <div className="border-border/80 bg-background flex h-full flex-col border-r">
-      <ChatHeader
-        showContext={showContext}
-        contextCount={contextList.length}
-        loading={loading}
-        onToggleContext={onToggleContext}
-      />
-
+    <div className="bg-background flex h-full flex-col">
       <div className="flex-1 space-y-2.5 overflow-y-auto p-3">
         {showContext ? (
           <ContextView contextList={contextList} />
@@ -134,6 +135,7 @@ export function ChatPanel({
         onStopMessage={onStopMessage}
         selectedModel={selectedModel}
         onSelectModel={onSelectModel}
+        models={models}
         thinkingLevel={thinkingLevel}
         onSelectThinkingLevel={onSelectThinkingLevel}
         executionMode={executionMode}

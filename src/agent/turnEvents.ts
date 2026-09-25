@@ -219,6 +219,7 @@ export function buildTurnEvents({
 
 export {
   extractAssistantText,
+  extractTurnSteps,
   extractContextMessages,
   extractTurnToolCalls,
   type MessageLike,

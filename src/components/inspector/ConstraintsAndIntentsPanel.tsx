@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import type { UserIntent } from "@/interceptor-agents/governor/types";
 import { reframeSatisfaction } from "@/lib/reframeSatisfaction";
-import { Shield } from "lucide-react";
-import { AVAILABLE_TOOLS, DEFAULT_INJECTORS, type ConsoleEvent, type InjectorMeta } from "@/types";
+import { AVAILABLE_TOOLS, DEFAULT_INJECTORS, type ConsoleEvent, type InjectorMeta, type Message, type ThinkingLevel, type ExecutionMode } from "@/types";
 import { IntentsTab } from "./IntentsTab";
+import { ConstraintsTab } from "./ConstraintsTab";
 import { ToolsTab } from "./ToolsTab";
 import { InjectorsTab } from "./InjectorsTab";
 import { ConsoleTab } from "./ConsoleTab";
+import { SettingsTab } from "./SettingsTab";
 
 // Re-export types for backward compatibility
 
@@ -20,6 +21,12 @@ export interface ConstraintsAndIntentsPanelProps {
   onToggleTool?: (toolName: string) => void;
   onSetAllTools?: (isEnabled: boolean) => void;
   injectors?: InjectorMeta[];
+  sessionId?: string;
+  workspacePath?: string;
+  selectedModel?: string;
+  thinkingLevel?: ThinkingLevel;
+  executionMode?: ExecutionMode;
+  messages?: Message[];
 }
 
 export function ConstraintsAndIntentsPanel({
@@ -32,9 +39,15 @@ export function ConstraintsAndIntentsPanel({
   onToggleTool,
   onSetAllTools,
   injectors = DEFAULT_INJECTORS,
+  sessionId,
+  workspacePath,
+  selectedModel,
+  thinkingLevel,
+  executionMode,
+  messages,
 }: ConstraintsAndIntentsPanelProps) {
   const [activeTab, setActiveTab] = useState<
-    "intent" | "constraints" | "console" | "tools" | "injectors"
+    "intent" | "constraints" | "console" | "tools" | "injectors" | "settings"
   >("intent");
   const [reframedMap, setReframedMap] = useState<Record<string, string>>({});
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
@@ -202,6 +215,16 @@ export function ConstraintsAndIntentsPanel({
             {injectors.length}
           </span>
         </button>
+        <button
+          onClick={() => setActiveTab("settings")}
+          className={`shrink-0 cursor-pointer rounded-xs px-2 py-1 font-medium transition-colors ${
+            activeTab === "settings"
+              ? "bg-muted/70 text-foreground"
+              : "text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+          }`}
+        >
+          settings
+        </button>
 
         {activeTab === "console" && consoleEvents.length > 0 && onClearConsole && (
           <div className="ml-auto shrink-0">
@@ -230,23 +253,7 @@ export function ConstraintsAndIntentsPanel({
         )}
 
         {activeTab === "constraints" && (
-          <div>
-            {globalConstraints.length === 0 ? (
-              <div className="text-muted-foreground p-3 text-xs">No active constraints.</div>
-            ) : (
-              <div className="space-y-0.5">
-                {globalConstraints.map((constraint, index) => (
-                  <div
-                    key={index}
-                    className="text-foreground hover:bg-muted/40 flex items-start gap-2 rounded-xs px-2 py-1.5 text-xs transition-colors"
-                  >
-                    <Shield className="text-muted-foreground mt-0.5 size-3.5 shrink-0 opacity-70" />
-                    <span className="leading-snug">{constraint}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <ConstraintsTab globalConstraints={globalConstraints} />
         )}
 
         {activeTab === "console" && (
@@ -274,16 +281,20 @@ export function ConstraintsAndIntentsPanel({
             onToggleExpand={toggleInjectorExpanded}
           />
         )}
+
+        {activeTab === "settings" && (
+          <SettingsTab
+            sessionId={sessionId}
+            workspacePath={workspacePath}
+            selectedModel={selectedModel}
+            thinkingLevel={thinkingLevel}
+            executionMode={executionMode}
+            intentStack={intentStack}
+            globalConstraints={globalConstraints}
+            messages={messages}
+          />
+        )}
       </div>
     </div>
   );
 }
-
-export {
-  type AgentToolMeta,
-  type InjectorPhase,
-  type ConsoleEvent,
-  type InjectorMeta,
-  AVAILABLE_TOOLS,
-  DEFAULT_INJECTORS,
-} from "@/types";

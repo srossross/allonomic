@@ -1,16 +1,21 @@
 import path from "node:path";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { MessagesAnnotation, StateGraph, START, MemorySaver } from "@langchain/langgraph";
-import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
-import { HumanMessage, AIMessage, BaseMessage } from "@langchain/core/messages";
+import { MemorySaver } from "@langchain/langgraph";
+import { ToolNode } from "@langchain/langgraph/prebuilt";
+import { HumanMessage, BaseMessage } from "@langchain/core/messages";
 import { createAgentTools } from "../../agent/tools";
 import { logConversation } from "../../telemetry/logger";
-import { generateSessionId, saveTurn } from "../../telemetry/session";
+import { generateSessionId, saveTurn, appendTraceLog, saveTurnError } from "../../telemetry/session";
 import { findApiKey } from "../../common/env";
 import type { ExecutionMode } from "../../types";
 import { AgentInterceptor, PipelineContext } from "./types";
 import { createInterceptedTools } from "./interceptedTools";
-import { extractFinalResponse, sanitizeMessagesForModel } from "./thinking";
+import { extractFinalResponse } from "./thinking";
+import {
+  createCompiledWorkflow,
+  rehydrateHistory,
+  type CompiledWorkflow,
+} from "./workflow";
 
 export interface AgentRunnerOptions {
   workspaceDir?: string;
@@ -24,46 +29,6 @@ export interface AgentRunnerOptions {
   thinkingBudget?: number;
   executionMode?: ExecutionMode;
 }
-
-function createCompiledWorkflow(
-  model: ChatGoogleGenerativeAI | ReturnType<ChatGoogleGenerativeAI["bindTools"]>,
-  toolNode: ToolNode,
-  checkpointer: MemorySaver
-) {
-  const systemMessage = {
-    role: "system",
-    content:
-      "You are an expert software engineer with access to local tools. Inspect the codebase, read relevant files, and fulfill user requests directly.",
-  };
-
-  const callModel = async (state: typeof MessagesAnnotation.State) => {
-    const sanitizedMessages = sanitizeMessagesForModel(state.messages);
-    const messages = [systemMessage, ...sanitizedMessages];
-    const response = await model.invoke(messages);
-    return { messages: [response] };
-  };
-
-  const afterToolsCondition = (state: typeof MessagesAnnotation.State) => {
-    const lastMessage = state.messages.at(-1);
-    return lastMessage &&
-      typeof lastMessage.content === "string" &&
-      lastMessage.content.startsWith("[PENDING_APPROVAL]")
-      ? "__end__"
-      : "agent";
-  };
-
-
-  const workflow = new StateGraph(MessagesAnnotation)
-    .addNode("agent", callModel)
-    .addNode("tools", toolNode)
-    .addEdge(START, "agent")
-    .addConditionalEdges("agent", toolsCondition)
-    .addConditionalEdges("tools", afterToolsCondition, ["agent", "__end__"]);
-
-  return workflow.compile({ checkpointer });
-}
-
-type CompiledWorkflow = ReturnType<typeof createCompiledWorkflow>;
 
 export class AgentRunner {
   private activeControllers = new Map<string, AbortController>();
@@ -82,13 +47,13 @@ export class AgentRunner {
 
   constructor(options: AgentRunnerOptions = {}) {
     this.workspaceDir = options.workspaceDir || process.cwd();
-    this.modelName = options.modelName ?? "gemini-2.5-flash";
+    this.modelName = options.modelName ?? "gemini-3.8-flash";
     this.interceptors = options.interceptors ?? [];
     this.maxExitRetries = options.maxExitRetries ?? 3;
     this.sessionId = options.sessionId || generateSessionId(8);
     this.turnIndex = options.initialTurnIndex ?? 1;
     this.enabledTools = options.enabledTools;
-    this.thinkingBudget = options.thinkingBudget ?? 8192;
+    this.thinkingBudget = options.thinkingBudget ?? 1024;
     this.executionMode = options.executionMode ?? "accept edits";
 
     const key = options.apiKey || findApiKey();
@@ -130,17 +95,30 @@ export class AgentRunner {
     });
     const model = interceptedTools.length > 0 ? baseModel.bindTools(interceptedTools) : baseModel;
 
-    this.compiled = createCompiledWorkflow(model, toolNode, this.checkpointer);
+    this.compiled = createCompiledWorkflow(
+      model,
+      toolNode,
+      this.checkpointer,
+      this.interceptors,
+      (msg) => this.trace(msg)
+    );
+  }
+
+  public getSessionDir(): string {
+    return path.resolve(this.workspaceDir, ".atomic/sessions", this.sessionId);
+  }
+
+  public trace(message: string) {
+    const dir = this.getSessionDir();
+    void appendTraceLog(dir, message);
   }
 
   public abort(threadId: string): boolean {
     const controller = this.activeControllers.get(threadId);
-    if (controller) {
-      controller.abort();
-      this.activeControllers.delete(threadId);
-      return true;
-    }
-    return false;
+    if (!controller) return false;
+    controller.abort();
+    this.activeControllers.delete(threadId);
+    return true;
   }
 
   public setModelAndThinking(modelName?: string, thinkingBudget?: number) {
@@ -153,9 +131,7 @@ export class AgentRunner {
       this.thinkingBudget = thinkingBudget;
       isChanged = true;
     }
-    if (isChanged) {
-      this.initGraph();
-    }
+    if (isChanged) this.initGraph();
   }
 
   public setEnabledTools(tools: string[]) {
@@ -170,11 +146,37 @@ export class AgentRunner {
   }
 
   /**
-   * Run the full pipeline for a user prompt with Entry, Pre-Tool, and Exit intercepts.
-   * Auto-persists the turn to .atomic/sessions/<sessionId>/turns/<turnIndex>/
+   * Resume an interrupted tool call by injecting the result and continuing the loop.
+   */
+  public async resumeTool(threadId: string, toolId: string, resultString: string) {
+    const state = await this.compiled.getState({ configurable: { thread_id: threadId } });
+    if (!state || !state.values || !state.values.messages) return null;
+
+    const messages = state.values.messages;
+    const index = messages.findIndex((m: BaseMessage) => m._getType() === "tool" && (m.name === toolId || Reflect.get(m, "tool_call_id") === toolId));
+    
+    if (index === -1) return null;
+
+    const oldMessage = messages[index];
+    const newToolMessage = new ToolMessage({
+      content: resultString,
+      name: oldMessage.name,
+      tool_call_id: String(Reflect.get(oldMessage, "tool_call_id")),
+    });
+    newToolMessage.id = oldMessage.id;
+
+    await this.compiled.updateState(
+      { configurable: { thread_id: threadId } },
+      { messages: [newToolMessage] },
+      "tools"
+    );
+  }
+
+  /**
+   * Run the full pipeline for a user prompt natively using LangGraph.
    */
   async run(
-    prompt: string,
+    prompt: string | null,
     threadId: string = `thread-${Date.now()}`,
     options?: {
       signal?: AbortSignal;
@@ -185,108 +187,50 @@ export class AgentRunner {
     this.activeControllers.set(threadId, controller);
 
     if (options?.signal) {
-      options.signal.addEventListener("abort", () => {
-        controller.abort();
-      });
+      options.signal.addEventListener("abort", () => controller.abort());
+    }
+
+    const sessionDir = this.getSessionDir();
+    const context: PipelineContext = {
+      workspaceDir: this.workspaceDir,
+      threadId,
+      sessionId: this.sessionId,
+      turnIndex: this.turnIndex,
+      entryToolCalls: [],
+      preToolLogs: [],
+      exitToolCalls: [],
+    };
+
+    if (prompt === null) {
+      this.trace(`[TURN_RESUME] Turn ${this.turnIndex}: Resuming execution...`);
+    } else {
+      this.trace(`[TURN_START] Turn ${this.turnIndex}: prompt="${prompt.slice(0, 100)}"`);
     }
 
     try {
-      const context: PipelineContext = {
-        workspaceDir: this.workspaceDir,
-        threadId,
-        sessionId: this.sessionId,
-        turnIndex: this.turnIndex,
-        entryToolCalls: [],
-        preToolLogs: [],
-        exitToolCalls: [],
-      };
-
-      // 1. ENTRY INTERCEPT
-      for (const interceptor of this.interceptors) {
-        if (controller.signal.aborted) {
-          throw new Error("Generation stopped by user");
-        }
-        if (interceptor.onUserPrompt) {
-          await interceptor.onUserPrompt(prompt, context);
-        }
-      }
-
       // Rehydrate past message history into checkpointer if empty
-      if (options?.history && options.history.length > 0) {
-        const state = await this.compiled.getState({ configurable: { thread_id: threadId } });
-        if (!state?.values?.messages || state.values.messages.length === 0) {
-          const pastMessages = options.history.map((h) =>
-            h.role === "user" || h.role === "human"
-              ? new HumanMessage(h.content)
-              : new AIMessage(h.content)
-          );
-          await this.compiled.updateState(
-            { configurable: { thread_id: threadId } },
-            { messages: pastMessages }
-          );
-        }
-      }
+      await rehydrateHistory(this.compiled, threadId, options?.history);
 
-      // 2. WORKER TOOL LOOP + 3. EXIT INTERCEPT RETRIES
-      let currentInput: BaseMessage[] = [new HumanMessage(prompt)];
-      let retries = 0;
+      const currentInput: BaseMessage[] | null = prompt === null ? null : [new HumanMessage(prompt)];
       let finalResult: { messages: BaseMessage[] } = { messages: [] };
 
-      while (retries <= this.maxExitRetries) {
-        if (controller.signal.aborted) {
-          throw new Error("Generation stopped by user");
+      finalResult = await this.compiled.invoke(
+        currentInput ? { messages: currentInput } : null,
+        {
+          configurable: { thread_id: threadId, context },
+          signal: controller.signal,
+          recursionLimit: 50,
         }
+      );
 
-        finalResult = await this.compiled.invoke(
-          { messages: currentInput },
-          { configurable: { thread_id: threadId }, signal: controller.signal }
-        );
-
-        if (controller.signal.aborted) {
-          throw new Error("Generation stopped by user");
-        }
-
-        // Check Exit Interceptors
-        let isNeedsRetry = false;
-        let combinedFeedback = "";
-
-        for (const interceptor of this.interceptors) {
-          if (!interceptor.onAgentFinish) {
-            continue;
-          }
-
-          const verdict = await interceptor.onAgentFinish(finalResult.messages, context);
-          if (verdict.allowFinish) {
-            continue;
-          }
-
-          isNeedsRetry = true;
-          combinedFeedback += `\n[${interceptor.name} Feedback]: ${verdict.feedback}`;
-        }
-
-        if (!isNeedsRetry) {
-          break; // Passed all exit intercepts!
-        }
-
-        retries++;
-        if (retries > this.maxExitRetries) {
-          console.warn(`[AgentRunner] Hit max exit retries (${this.maxExitRetries}). Returning.`);
-          break;
-        }
-
-        // Reinject feedback into the worker loop
-        currentInput = [
-          new HumanMessage(
-            `Your output did not satisfy the exit criteria:${combinedFeedback}\nPlease address this feedback to complete the task.`
-          ),
-        ];
+      if (controller.signal.aborted) {
+        throw new Error("Generation stopped by user");
       }
 
       // Extract assistant final text and reasoning / thinking
       const { response: finalAgentResponse, thinking } = extractFinalResponse(finalResult.messages);
 
       // Save persistent turn directory: .atomic/sessions/<sessionId>/turns/<turnIndex>/
-      const sessionDir = path.resolve(this.workspaceDir, ".atomic/sessions", this.sessionId);
       const turnDir = await saveTurn(sessionDir, {
         turnIndex: this.turnIndex,
         userPrompt: prompt,
@@ -303,6 +247,7 @@ export class AgentRunner {
 
       // Also auto-log to legacy .atomic/conversation-<pid>.yml for backwards compat
       const logPath = await logConversation(finalResult.messages, this.workspaceDir);
+      this.trace(`[TURN_SUCCESS] Turn ${currentTurn} finished successfully.`);
 
       return {
         result: finalResult,
@@ -311,9 +256,26 @@ export class AgentRunner {
         turnDir,
         sessionId: this.sessionId,
         turnIndex: currentTurn,
-        retries,
+        retries: 0,
         pipelineContext: context,
       };
+    } catch (error) {
+      this.trace(
+        `[TURN_ERROR] Turn ${this.turnIndex} failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      try {
+        await saveTurnError(sessionDir, {
+          turnIndex: this.turnIndex,
+          userPrompt: prompt,
+          error,
+          entryToolCalls: context.entryToolCalls,
+          preToolLogs: context.preToolLogs,
+          exitToolCalls: context.exitToolCalls,
+        });
+      } catch (saveError) {
+        console.warn("[AgentRunner] Failed to persist turn error:", saveError);
+      }
+      throw error;
     } finally {
       this.activeControllers.delete(threadId);
     }

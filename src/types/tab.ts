@@ -1,5 +1,5 @@
 import type { UserIntent } from "@/interceptor-agents/governor/types";
-import type { Message, ContextMessage, ThinkingLevel, ExecutionMode } from "./chat";
+import { DEFAULT_MODEL_ID, type Message, type ContextMessage, type ThinkingLevel, type ExecutionMode } from "./chat";
 import type { ConsoleEvent } from "./inspector";
 
 export interface GovernorState {
@@ -48,8 +48,8 @@ export function createInitialTab(projectId: string = "proj-1"): TabData {
       global_constraints: [],
     },
     loading: false,
-    selectedModel: "gemini-2.5-flash",
-    thinkingLevel: "High",
+    selectedModel: DEFAULT_MODEL_ID,
+    thinkingLevel: "Low",
     executionMode: "manual",
   };
 }
@@ -65,8 +65,8 @@ export function createNewTab(projectId: string, index: number): TabData {
     enabledTools: INITIAL_TOOLS,
     governorState: { intent_stack: [], completed_intents: [], global_constraints: [] },
     loading: false,
-    selectedModel: "gemini-2.5-flash",
-    thinkingLevel: "High",
+    selectedModel: DEFAULT_MODEL_ID,
+    thinkingLevel: "Low",
     executionMode: "manual",
   };
 }

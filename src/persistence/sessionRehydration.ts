@@ -1,7 +1,13 @@
+/**
+ * @ai-instruction DO NOT replace this system with an opaque database (like SqliteSaver). 
+ * We deliberately use an Event-Sourced YAML architecture so that all agent thoughts, 
+ * tool calls, and state transitions remain human-readable, auditable, and manually editable on disk.
+ */
 import fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 import type { Message, ContextMessage, ConsoleEvent } from "../types";
+import { DEFAULT_MODEL_ID } from "../types/chat";
 import type { GovernorState } from "../interceptor-agents/governor/types";
 import type { RehydratedSession } from "../types/persistence";
 import { loadSessionMetadata, saveSessionMetadata } from "./sessionMetadata";
@@ -23,8 +29,8 @@ export async function rehydrateSession(
       closed: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      model: "gemini-2.5-flash",
-      thinkingLevel: "High",
+      model: DEFAULT_MODEL_ID,
+      thinkingLevel: "Low",
       enabledTools: ["read_file", "write_file", "list_files", "run_command"],
     };
     await saveSessionMetadata(workspaceDir, metadata);

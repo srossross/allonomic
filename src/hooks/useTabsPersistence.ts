@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from "react";
-import { type TabData, type Project, INITIAL_TOOLS } from "@/types";
+import { type TabData, type Project, INITIAL_TOOLS, DEFAULT_MODEL_ID } from "@/types";
 import {
   fetchWorkspaceStateApi,
   saveWorkspaceStateApi,
@@ -53,8 +53,8 @@ export function useTabsPersistence({
                 enabledTools: rehydrated.metadata.enabledTools || INITIAL_TOOLS,
                 governorState: rehydrated.governorState,
                 loading: false,
-                selectedModel: rehydrated.metadata.model || "gemini-2.5-flash",
-                thinkingLevel: rehydrated.metadata.thinkingLevel || "High",
+                selectedModel: rehydrated.metadata.model || DEFAULT_MODEL_ID,
+                thinkingLevel: rehydrated.metadata.thinkingLevel || "Low",
                 executionMode: rehydrated.metadata.executionMode || "manual",
               });
             } catch (error) {
@@ -87,8 +87,8 @@ export function useTabsPersistence({
             global_constraints: [],
           },
           loading: false,
-          selectedModel: "gemini-2.5-flash",
-          thinkingLevel: "High",
+          selectedModel: DEFAULT_MODEL_ID,
+          thinkingLevel: "Low",
           executionMode: "manual",
         };
 

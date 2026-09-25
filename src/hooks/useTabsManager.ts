@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { useState, useCallback, useRef } from "react";
 import {
   type TabData,
@@ -9,6 +10,7 @@ import {
   AVAILABLE_MODES,
   INITIAL_TOOLS,
   THINKING_BUDGETS,
+  DEFAULT_MODEL_ID,
   createInitialTab,
   createNewTab,
 } from "@/types";
@@ -147,7 +149,7 @@ export function useTabsManager(activeProject: Project) {
       const currentTabId = activeTab.id;
       const currentThreadId = activeTab.threadId;
       const currentTools = activeTab.enabledTools || INITIAL_TOOLS;
-      const currentModel = activeTab.selectedModel || "gemini-2.5-flash";
+      const currentModel = activeTab.selectedModel || DEFAULT_MODEL_ID;
       const currentThinkingLevel = activeTab.thinkingLevel || "High";
       const thinkingBudget = THINKING_BUDGETS[currentThinkingLevel] ?? 8192;
       const workspaceDir = activeProject?.path;
@@ -175,7 +177,25 @@ export function useTabsManager(activeProject: Project) {
           modelName: currentModel,
           thinkingBudget,
           executionMode: activeTab.executionMode || "manual",
-          history: activeTab.messages.map((m) => ({ role: m.role, content: m.content })),
+          history: activeTab.messages.flatMap((m) => {
+            const msgs: Record<string, unknown>[] = [{ role: m.role, content: m.content }];
+            if (m.toolCalls && m.toolCalls.length > 0) {
+              msgs[0].tool_calls = m.toolCalls.map(tc => ({
+                id: tc.id || "unknown",
+                name: tc.name,
+                args: tc.args || {}
+              }));
+              for (const tc of m.toolCalls) {
+                msgs.push({
+                  role: "tool",
+                  content: tc.result || "",
+                  tool_call_id: tc.id || "unknown",
+                  name: tc.name
+                });
+              }
+            }
+            return msgs;
+          }),
           signal: controller.signal,
         });
 
@@ -184,7 +204,18 @@ export function useTabsManager(activeProject: Project) {
             if (t.id !== currentTabId) return t;
 
             const updatedMessages: Message[] = [...t.messages];
-            if (data.assistantMessage || (data.toolCalls && data.toolCalls.length > 0)) {
+            if (data.turnSteps && data.turnSteps.length > 0) {
+              for (const [idx, step] of data.turnSteps.entries()) {
+                updatedMessages.push({
+                  id: String(Date.now() + idx + 1),
+                  role: step.role,
+                  content: step.content,
+                  thinking: step.thinking,
+                  thinkingDurationSeconds: step.thinkingDurationSeconds || (idx === 0 ? data.thinkingDurationSeconds : undefined),
+                  toolCalls: step.toolCalls,
+                });
+              }
+            } else if (data.assistantMessage || (data.toolCalls && data.toolCalls.length > 0)) {
               updatedMessages.push({
                 id: String(Date.now() + 1),
                 role: "assistant",

@@ -8,7 +8,9 @@ import type {
   SessionMetadata,
   RehydratedSession,
   ExecutionMode,
+  ModelOption,
 } from "@/types";
+import { AVAILABLE_MODELS } from "@/types";
 import type { GovernorState } from "@/types/tab";
 
 export interface RunAgentParams {
@@ -20,11 +22,24 @@ export interface RunAgentParams {
   modelName: string;
   thinkingBudget: number;
   executionMode?: ExecutionMode;
-  history?: Array<{ role: string; content: string }>;
+  history?: Array<{
+    role: string;
+    content: string;
+    tool_calls?: Record<string, unknown>[];
+    tool_call_id?: string;
+    name?: string;
+  }>;
   signal?: AbortSignal;
 }
 
 export interface RunAgentResponse {
+  turnSteps?: Array<{
+    role: "assistant";
+    content: string;
+    thinking?: string;
+    thinkingDurationSeconds?: number;
+    toolCalls?: ToolCallInfo[];
+  }>;
   assistantMessage?: string;
   thinking?: string;
   thinkingDurationSeconds?: number;
@@ -83,6 +98,40 @@ export async function stopAgentPromptApi(threadId: string, sessionId?: string): 
   } catch {
     // Network abort or stop errors can be safely ignored
   }
+}
+
+export async function resumeAgentPromptApi(params: {
+  threadId: string;
+  sessionId: string;
+  workspaceDir?: string;
+  toolId: string;
+  resultString: string;
+}): Promise<RunAgentResponse> {
+  const res = await fetch("/api/agent/resume", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    let errorMessage = `HTTP ${res.status}`;
+    try {
+      const errorData: unknown = await res.json();
+      if (
+        errorData &&
+        typeof errorData === "object" &&
+        "error" in errorData &&
+        typeof errorData.error === "string"
+      ) {
+        errorMessage = errorData.error;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(errorMessage);
+  }
+
+  return res.json();
 }
 
 export interface ApplyWriteParams {
@@ -176,3 +225,34 @@ export async function saveSessionMetadataApi(
     body: JSON.stringify({ workspaceDir, metadata }),
   });
 }
+
+function isModelOption(item: unknown): item is ModelOption {
+  if (!item || typeof item !== "object") return false;
+  const id = Reflect.get(item, "id");
+  const label = Reflect.get(item, "label");
+  const hasThinking = Reflect.get(item, "hasThinking");
+  return typeof id === "string" && typeof label === "string" && typeof hasThinking === "boolean";
+}
+
+// Models API
+export async function fetchModelsApi(): Promise<ModelOption[]> {
+  try {
+    const res = await fetch("/api/models");
+    if (res.ok) {
+      const data: unknown = await res.json();
+      if (
+        data &&
+        typeof data === "object" &&
+        "models" in data &&
+        Array.isArray(data.models)
+      ) {
+        const valid = data.models.filter(isModelOption);
+        if (valid.length > 0) return valid;
+      }
+    }
+  } catch (error) {
+    console.warn("[API] Failed to fetch dynamic models from server:", error);
+  }
+  return AVAILABLE_MODELS;
+}
+

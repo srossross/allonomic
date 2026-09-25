@@ -6,10 +6,26 @@ import { ConstraintsAndIntentsPanel } from "@/components/inspector/ConstraintsAn
 import { useTabsManager } from "@/hooks/useTabsManager";
 import { useToolApprovals } from "@/hooks/useToolApprovals";
 import { useProjectManager } from "@/hooks/useProjectManager";
-import type { InjectorMeta } from "@/types";
+import { fetchModelsApi } from "@/agent/api";
+import { AVAILABLE_MODELS, DEFAULT_MODEL_ID, type InjectorMeta, type ModelOption } from "@/types";
 
 export function App() {
   const [injectors, setInjectors] = useState<InjectorMeta[]>([]);
+  const [models, setModels] = useState<ModelOption[]>(AVAILABLE_MODELS);
+
+  useEffect(() => {
+    async function loadModels() {
+      try {
+        const dynamicModels = await fetchModelsApi();
+        if (dynamicModels && dynamicModels.length > 0) {
+          setModels(dynamicModels);
+        }
+      } catch {
+        // Fallback already handled
+      }
+    }
+    void loadModels();
+  }, []);
 
   useEffect(() => {
     async function loadInjectors() {
@@ -107,23 +123,22 @@ export function App() {
 
       {/* RIGHT MAIN AREA: Tabs across top, then 60/40 panels */}
       <div className="flex h-full min-w-0 flex-1 flex-col">
-        <TabBar
-          tabs={tabs.map((t) => ({
-            id: t.id,
-            title: t.title,
-            projectId: t.projectId,
-            showContext: t.showContext,
-          }))}
-          activeTabId={activeTabId}
-          onSelectTab={setActiveTabId}
-          onCloseTab={handleCloseTab}
-          onNewTab={handleNewTab}
-          onToggleContext={handleToggleContext}
-        />
-
         {/* Workspace: 60% Chat / 40% Constraints & Intents (scoped to active tab) */}
         <main className="flex min-h-0 w-full flex-1">
-          <section className="flex h-full w-[60%] min-w-0 flex-col">
+          <section className="border-border/80 flex h-full w-[60%] min-w-0 flex-col border-r">
+            <TabBar
+              tabs={tabs.map((t) => ({
+                id: t.id,
+                title: t.title,
+                projectId: t.projectId,
+                showContext: t.showContext,
+              }))}
+              activeTabId={activeTabId}
+              onSelectTab={setActiveTabId}
+              onCloseTab={handleCloseTab}
+              onNewTab={handleNewTab}
+              onToggleContext={handleToggleContext}
+            />
             <ChatPanel
               messages={activeTab.messages}
               contextMessages={activeTab.contextMessages}
@@ -132,9 +147,10 @@ export function App() {
               loading={activeTab.loading}
               onSendMessage={handleSendMessage}
               onStopMessage={handleStopMessage}
-              selectedModel={activeTab.selectedModel || "gemini-2.5-flash"}
+              selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
               onSelectModel={handleSelectModel}
-              thinkingLevel={activeTab.thinkingLevel || "High"}
+              models={models}
+              thinkingLevel={activeTab.thinkingLevel || "Low"}
               onSelectThinkingLevel={handleSelectThinkingLevel}
               executionMode={activeTab.executionMode || "manual"}
               onSelectExecutionMode={handleSelectExecutionMode}
@@ -147,6 +163,12 @@ export function App() {
           <section className="flex h-full w-[40%] min-w-0 flex-col">
             <ConstraintsAndIntentsPanel
               key={activeTab.id}
+              sessionId={activeTab.id}
+              workspacePath={activeProject?.path || "."}
+              selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
+              thinkingLevel={activeTab.thinkingLevel || "Low"}
+              executionMode={activeTab.executionMode || "manual"}
+              messages={activeTab.messages}
               intentStack={activeTab.governorState.intent_stack}
               completedIntents={activeTab.governorState.completed_intents}
               globalConstraints={activeTab.governorState.global_constraints}

@@ -47,7 +47,7 @@ export function createWorkerAgent(options: WorkerAgentOptions = {}) {
     const toolNode = new ToolNode(tools);
 
     const model = new ChatGoogleGenerativeAI({
-      model: options.modelName ?? "gemini-2.5-flash",
+      model: options.modelName ?? "gemini-3.8-flash",
       apiKey,
       temperature: 0,
     }).bindTools(tools);
@@ -67,7 +67,7 @@ export function createWorkerAgent(options: WorkerAgentOptions = {}) {
   } else {
     // Pure conversational without tools
     const model = new ChatGoogleGenerativeAI({
-      model: options.modelName ?? "gemini-2.5-flash",
+      model: options.modelName ?? "gemini-3.8-flash",
       apiKey,
       temperature: 0.7,
     });

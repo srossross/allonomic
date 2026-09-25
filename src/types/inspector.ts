@@ -30,13 +30,15 @@ export interface InjectorMeta {
   constraintsPath?: string;
 }
 
+import { DEFAULT_MODEL_ID } from "./chat";
+
 export const DEFAULT_INJECTORS: InjectorMeta[] = [
   {
     id: "governor",
     name: "Governor",
     type: "Pipeline Interceptor",
     status: "active",
-    modelName: "gemini-2.5-flash",
+    modelName: DEFAULT_MODEL_ID,
     description:
       "Monitors and intercepts agent actions across execution phases to enforce policy, constraints, and goal satisfaction verification.",
     phases: [

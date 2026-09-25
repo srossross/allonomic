@@ -1,6 +1,6 @@
 import { useCallback } from "react";
-import type { TabData, Project, ConsoleEvent } from "@/types";
-import { applyWriteApi } from "@/agent/api";
+import type { TabData, Project, ConsoleEvent, Message } from "@/types";
+import { applyWriteApi, resumeAgentPromptApi } from "@/agent/api";
 
 interface UseToolApprovalsParams {
   activeProject: Project;
@@ -15,6 +15,7 @@ export function useToolApprovals({ activeProject, activeTabId, setTabs }: UseToo
       const filePath = String(args.filePath || "");
       if (!filePath) return;
       const content = String(args.content || "");
+      const resultString = `Successfully wrote ${content.length} bytes to ${filePath}`;
 
       try {
         await applyWriteApi({
@@ -38,11 +39,16 @@ export function useToolApprovals({ activeProject, activeTabId, setTabs }: UseToo
           details: { filePath, bytesWritten: content.length },
         };
 
-        setTabs((previous) =>
-          previous.map((t) => {
+        // Get the active tab to read threadId
+        let threadId = "default";
+        setTabs((previous) => {
+          const t = previous.find(p => p.id === activeTabId);
+          if (t) threadId = t.threadId;
+          return previous.map((t) => {
             if (t.id !== activeTabId) return t;
             return {
               ...t,
+              loading: true, // Set loading while resuming
               messages: t.messages.map((m) => {
                 if (m.id !== messageId) return m;
                 return {
@@ -54,7 +60,7 @@ export function useToolApprovals({ activeProject, activeTabId, setTabs }: UseToo
                       ? {
                           ...tc,
                           status: "approved",
-                          result: `Successfully wrote ${content.length} bytes to ${filePath}`,
+                          result: resultString,
                         }
                       : tc;
                   }),
@@ -62,10 +68,58 @@ export function useToolApprovals({ activeProject, activeTabId, setTabs }: UseToo
               }),
               consoleEvents: [...(t.consoleEvents || []), approvalEvent],
             };
+          });
+        });
+
+        // Resume the agent
+        const data = await resumeAgentPromptApi({
+           threadId,
+           sessionId: activeTabId,
+           workspaceDir: activeProject?.path,
+           toolId,
+           resultString
+        });
+
+        setTabs((previous) =>
+          previous.map((t) => {
+            if (t.id !== activeTabId) return t;
+
+            const updatedMessages: Message[] = [...t.messages];
+            if (data.turnSteps && data.turnSteps.length > 0) {
+              for (const [idx, step] of data.turnSteps.entries()) {
+                updatedMessages.push({
+                  id: String(Date.now() + idx + 1),
+                  role: step.role,
+                  content: step.content,
+                  thinking: step.thinking,
+                  thinkingDurationSeconds: step.thinkingDurationSeconds || (idx === 0 ? data.thinkingDurationSeconds : undefined),
+                  toolCalls: step.toolCalls,
+                });
+              }
+            } else if (data.assistantMessage || (data.toolCalls && data.toolCalls.length > 0)) {
+              updatedMessages.push({
+                id: String(Date.now() + 1),
+                role: "assistant",
+                content: data.assistantMessage || "",
+                thinking: data.thinking || undefined,
+                thinkingDurationSeconds: data.thinkingDurationSeconds || undefined,
+                toolCalls: data.toolCalls || undefined,
+              });
+            }
+
+            return {
+              ...t,
+              messages: updatedMessages,
+              contextMessages: data.contextMessages || t.contextMessages,
+              consoleEvents: [...(t.consoleEvents || []), ...(data.turnEvents || [])],
+              governorState: data.governorState || t.governorState,
+              loading: false,
+            };
           })
         );
       } catch (error: unknown) {
-        console.error("Failed to apply approved write:", error);
+        console.error("Failed to apply approved write or resume:", error);
+        setTabs((previous) => previous.map(t => t.id === activeTabId ? { ...t, loading: false } : t));
       }
     },
     [activeProject, activeTabId, setTabs]

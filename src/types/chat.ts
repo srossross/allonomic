@@ -23,7 +23,11 @@ export interface ModelOption {
   hasThinking: boolean;
 }
 
+export const DEFAULT_MODEL_ID = "gemini-3.8-flash";
+
 export const AVAILABLE_MODELS: ModelOption[] = [
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", hasThinking: true },
+  { id: "gemini-3.8-pro", label: "Gemini 3.8 Pro", hasThinking: true },
   { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hasThinking: true },
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hasThinking: true },
   { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hasThinking: true },

@@ -14,8 +14,8 @@ export function createShellTools(workspaceDir: string = process.cwd(), isDryRun:
       try {
         const { stdout, stderr } = await execAsync(command, {
           cwd: workspaceDir,
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: 30_000,
+          maxBuffer: 100 * 1024 * 1024,
+          timeout: 300_000,
         });
         const out = stdout ? stdout.trim() : "";
         const error = stderr ? stderr.trim() : "";

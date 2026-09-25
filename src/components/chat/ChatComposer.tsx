@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ArrowRight, FileCode } from "lucide-react";
-import { AVAILABLE_MODES, type ThinkingLevel, type ExecutionMode } from "@/types";
+import { AVAILABLE_MODES, DEFAULT_MODEL_ID, type ThinkingLevel, type ExecutionMode, type ModelOption } from "@/types";
 import { ModeSelector } from "./ModeSelector";
 import { ModelSelector } from "./ModelSelector";
 
@@ -17,6 +17,7 @@ interface ChatComposerProperties {
   onStopMessage?: () => void;
   selectedModel?: string;
   onSelectModel?: (model: string) => void;
+  models?: ModelOption[];
   thinkingLevel?: ThinkingLevel;
   onSelectThinkingLevel?: (level: ThinkingLevel) => void;
   executionMode?: ExecutionMode;
@@ -31,9 +32,10 @@ export function ChatComposer({
   loading,
   onSendMessage,
   onStopMessage,
-  selectedModel = "gemini-2.5-flash",
+  selectedModel = DEFAULT_MODEL_ID,
   onSelectModel,
-  thinkingLevel = "High",
+  models,
+  thinkingLevel = "Low",
   onSelectThinkingLevel,
   executionMode = "manual",
   onSelectExecutionMode,
@@ -166,6 +168,7 @@ export function ChatComposer({
               onSelectModel={onSelectModel}
               thinkingLevel={thinkingLevel}
               onSelectThinkingLevel={onSelectThinkingLevel}
+              models={models}
             />
           </div>
 
