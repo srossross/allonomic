@@ -60,8 +60,8 @@ export function useToolApprovals({ activeProject, activeTabId, setTabs }: UseToo
               summary: `Approved and ran command: ${command}`,
               details: { command, stdout: res.stdout, stderr: res.stderr },
             };
-          } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
+          } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
             resultString = `[STDERR]:\nCommand failed to execute or API error: ${errorMessage}`;
             approvalEvent = {
               id: `appr-${Date.now()}`,

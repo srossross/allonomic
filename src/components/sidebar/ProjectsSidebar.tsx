@@ -56,7 +56,7 @@ export function ProjectsSidebar({
       {/* Sidebar Header */}
       <div className="border-border/80 flex h-9 items-center justify-between border-b px-3">
         <div className="flex items-center gap-1.5">
-          <span className="text-foreground font-semibold text-xs tracking-tight">{activeProject?.name || "atomic"}</span>
+          <span className="text-foreground font-semibold text-xs tracking-tight">{projects.find(p => p.id === activeProjectId)?.name || "atomic"}</span>
           <span className="text-muted-foreground/60 font-mono text-[10px]">/ projects</span>
         </div>
         <button

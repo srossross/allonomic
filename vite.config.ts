@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { defineConfig, type Plugin, type ViteDevServer, type Connect } from "vite";
 import type { ServerResponse } from "node:http";
 import react from "@vitejs/plugin-react";
@@ -22,6 +23,17 @@ function sendJson(res: ServerResponse, data: unknown, status = 200) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(data));
+}
+
+function findDevContainerRoot(startDir: string): string | null {
+  let currentDir = path.resolve(startDir);
+  while (currentDir !== path.parse(currentDir).root) {
+    if (fs.existsSync(path.join(currentDir, ".devcontainer"))) {
+      return currentDir;
+    }
+    currentDir = path.dirname(currentDir);
+  }
+  return null;
 }
 
 function sendError(res: ServerResponse, error: unknown) {
@@ -157,6 +169,62 @@ function agentApiPlugin(): Plugin {
               await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
               await fs.promises.writeFile(targetPath, content, "utf8");
               sendJson(res, { success: true, filePath, bytesWritten: content.length });
+            } catch (error) {
+              sendError(res, error);
+            }
+            return;
+          }
+
+          if (pathname === "/api/agent/run-mutating-command" && request.method === "POST") {
+            try {
+              const body = await readBody(request);
+              const { workspaceDir, command } = JSON.parse(body || "{}");
+              const { exec } = await import("node:child_process");
+              const { promisify } = await import("node:util");
+              const execAsync = promisify(exec);
+              
+              const rootDir = findDevContainerRoot(workspaceDir || process.cwd());
+              if (!rootDir) throw new Error("No .devcontainer found");
+              const { stdout: psStdout } = await execAsync(`docker ps -q -f "label=devcontainer.local_folder=${rootDir}"`);
+              const [containerId] = psStdout.trim().split("\n", 1);
+              if (!containerId) throw new Error("Dev container is not running");
+
+              const escapedCommand = JSON.stringify(command).replace(/'/g, "'\\''");
+              const { stdout, stderr } = await execAsync(`docker exec ${containerId} sh -c '${escapedCommand}'`, {
+                maxBuffer: 100 * 1024 * 1024,
+                timeout: 300_000,
+              });
+              const out = stdout ? stdout.trim() : "";
+              const err = stderr ? stderr.trim() : "";
+              sendJson(res, { success: true, stdout: out, stderr: err });
+            } catch (error) {
+              sendError(res, error);
+            }
+            return;
+          }
+
+          if (pathname === "/api/devcontainer/status" && request.method === "GET") {
+            try {
+              const workspaceDir = parsedUrl.searchParams.get("workspaceDir") || process.cwd();
+              const rootDir = findDevContainerRoot(workspaceDir);
+              if (!rootDir) {
+                sendJson(res, { status: "not_setup", containerId: null });
+                return;
+              }
+              const { exec } = await import("node:child_process");
+              const { promisify } = await import("node:util");
+              const execAsync = promisify(exec);
+              try {
+                const { stdout } = await execAsync(`docker ps -q -f "label=devcontainer.local_folder=${rootDir}"`);
+                const [containerId] = stdout.trim().split("\n", 1);
+                if (containerId) {
+                  sendJson(res, { status: "running", containerId });
+                } else {
+                  sendJson(res, { status: "stopped", containerId: null });
+                }
+              } catch {
+                sendJson(res, { status: "stopped", containerId: null });
+              }
             } catch (error) {
               sendError(res, error);
             }
