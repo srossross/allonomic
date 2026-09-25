@@ -12,9 +12,9 @@ export function getWorkspacesFilePath(): string {
 function getDefaultWorkspace(): WorkspaceItem {
   const cwd = process.cwd();
   const parentDir = path.resolve(cwd, "..");
-  const isInsideAt = path.basename(cwd) === "at";
+  const isInsideAt = path.basename(cwd) === "at" || path.basename(cwd) === "allonomic";
   const defaultPath = isInsideAt ? parentDir : cwd;
-  const defaultName = path.basename(defaultPath) || "atomic";
+  const defaultName = path.basename(defaultPath) || "allonomic";
 
   return {
     id: "proj-1",

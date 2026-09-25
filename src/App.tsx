@@ -146,6 +146,7 @@ export function App() {
 
           <section className="flex h-full w-[40%] min-w-0 flex-col">
             <ConstraintsAndIntentsPanel
+              key={activeTab.id}
               intentStack={activeTab.governorState.intent_stack}
               completedIntents={activeTab.governorState.completed_intents}
               globalConstraints={activeTab.governorState.global_constraints}

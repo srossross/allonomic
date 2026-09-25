@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
+import { nanoid } from "nanoid";
 import { HumanMessage, AIMessage, BaseMessage } from "@langchain/core/messages";
 import { GovernorState, UserIntent, type IntentKind } from "../interceptor-agents/governor/types";
 
@@ -35,7 +36,7 @@ export function applyEntryToolCall(
       const id =
         typeof args.id === "string"
           ? args.id
-          : `intent_${state.intent_stack.length + state.completed_intents.length + 1}`;
+          : `itnt_${nanoid()}`;
       const kind: IntentKind = isIntentKind(args.kind) ? args.kind : "other";
       const description = typeof args.description === "string" ? args.description : "";
       const constraints = Array.isArray(args.constraints) ? args.constraints.map(String) : [];

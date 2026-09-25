@@ -11,7 +11,7 @@ Evaluate whether the agent's work genuinely satisfied one or more of the active 
 ## Evaluation & Resolution Rules
 
 1. **Resolve Satisfied Intents:**
-   - For **EACH** intent on the active stack that was genuinely satisfied or answered, call `resolve_intent({ id: "intent_id" })`.
+   - For **EACH** intent on the active stack that was genuinely satisfied or answered, call `resolve_intent({ id: "itnt_..." })`.
    - For capability questions (e.g. _"can you list...?"_), the intent is satisfied if the agent confirmed/explained its capability.
    - If a compound prompt had multiple intents and the agent answered all of them, call `resolve_intent` for each one!
 

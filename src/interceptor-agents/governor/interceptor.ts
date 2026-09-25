@@ -32,6 +32,15 @@ function loadPromptFile(filename: string): string {
   }
 }
 
+function extractIntentId(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  if (!("intent" in result)) return undefined;
+  const rawIntent = Reflect.get(result, "intent");
+  if (!rawIntent || typeof rawIntent !== "object") return undefined;
+  const id = Reflect.get(rawIntent, "id");
+  return typeof id === "string" ? id : undefined;
+}
+
 export class GovernorInterceptor implements AgentInterceptor {
   private constraintsPath?: string;
   private modelName: string;
@@ -126,10 +135,16 @@ ${baseConstraints}`;
         const matchingTool = promptTools.find((t) => t.name === call.name);
         if (!matchingTool) continue;
 
+        const result = await matchingTool.invoke(call.args);
+        if (call.name === "push_intent") {
+          const intentId = extractIntentId(result);
+          if (intentId && call.args && typeof call.args === "object") {
+            Reflect.set(call.args, "id", intentId);
+          }
+        }
         if (context.entryToolCalls) {
           context.entryToolCalls.push({ name: call.name, args: call.args });
         }
-        const result = await matchingTool.invoke(call.args);
         scratchpad.push(
           new ToolMessage({
             content: typeof result === "string" ? result : JSON.stringify(result),

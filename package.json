@@ -1,5 +1,5 @@
 {
-  "name": "at",
+  "name": "allonomic",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -31,6 +31,7 @@
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "lucide-react": "^1.48.0",
+    "nanoid": "^3.3.19",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "remark-gfm": "^4.0.1",

@@ -4,7 +4,7 @@ import { fetchWorkspacesApi, addWorkspaceApi, setActiveWorkspaceApi } from "@/ag
 
 export function useProjectManager(onNewTab?: () => void) {
   const [projects, setProjects] = useState<Project[]>([
-    { id: "proj-1", name: "atomic", path: "atomic" },
+    { id: "proj-1", name: "allonomic", path: "allonomic" },
   ]);
   const [activeProjectId, setActiveProjectId] = useState<string>("proj-1");
   const globalDirPickerRef = useRef<HTMLInputElement>(null);

@@ -1,5 +1,6 @@
 import { tool, StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
+import { nanoid } from "nanoid";
 import { GovernorState, intentKindSchema, UserIntent } from "./types";
 
 /**
@@ -9,16 +10,14 @@ export function createGovernorPromptTools(
   state: GovernorState,
   signalFinish: () => void
 ): StructuredTool[] {
-  let counter = state.intent_stack.length + state.completed_intents.length + 1;
-
   const constraintsSchema = z
     .array(z.string())
     .optional()
     .describe("Optional initial constraints attached to this intent.");
 
   const pushIntent = tool(
-    async ({ kind, description, constraints = [] }) => {
-      const id = `intent_${counter++}`;
+    async ({ id: providedId, kind, description, constraints = [] }) => {
+      const id = providedId || `itnt_${nanoid()}`;
       const newIntent: UserIntent = {
         id,
         kind,
@@ -36,6 +35,7 @@ export function createGovernorPromptTools(
       name: "push_intent",
       description: "Push a new user goal onto the intent stack.",
       schema: z.object({
+        id: z.string().optional().describe("Optional unique intent ID (e.g. 'itnt_...')."),
         kind: intentKindSchema.describe(
           "Type of user intent: 'question' (inquiring about capability or feasibility e.g. 'can you list...?'), 'request' (direct imperative action e.g. 'list the files'), 'feedback', 'confirmation', 'other', 'unknown'."
         ),
@@ -194,7 +194,7 @@ export function createGovernorExitTools(
       schema: z.object({
         id: z
           .string()
-          .describe("ID of the intent on the active stack that was satisfied (e.g. 'intent_1')."),
+          .describe("ID of the intent on the active stack that was satisfied (e.g. 'itnt_...')."),
       }),
     }
   );

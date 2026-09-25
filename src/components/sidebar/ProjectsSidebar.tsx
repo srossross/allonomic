@@ -48,9 +48,10 @@ export function ProjectsSidebar({
     <aside className="border-border/80 bg-muted/20 flex h-full w-56 flex-col border-r text-xs select-none">
       {/* Sidebar Header */}
       <div className="border-border/80 flex h-9 items-center justify-between border-b px-3">
-        <span className="text-muted-foreground font-mono text-[10px] font-semibold tracking-wider uppercase">
-          Projects
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-foreground font-semibold text-xs tracking-tight">allonomic</span>
+          <span className="text-muted-foreground/60 font-mono text-[10px]">/ projects</span>
+        </div>
         <button
           type="button"
           onClick={handleOpenDirPicker}

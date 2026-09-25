@@ -9,10 +9,13 @@ const PROMPT = `Reframe the given user intent into a satisfaction condition of 1
 
 Rules:
 1. Maximum 10 words.
-2. Phrased as a clear completion condition (e.g. "Answer if...", "Explain...", "Update...", "List...", "Delete...").
+2. Phrased as a concise condition describing the satisfied state (e.g. "String is appended to foo.txt", "Answer is provided for...", "File is updated").
 3. Output ONLY the raw condition string. No quotes, no markdown wrappers, no extra commentary.
 
-Example:
+Examples:
+Input: User wants to append the string "asdf" to the file "foo.txt".
+Output: String is appended to foo.txt
+
 Input: User wants to know if the agent is capable of running \`ls\`.
 Output: Answer if the agent is capable of running \`ls\` command
 `;
