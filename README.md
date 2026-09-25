@@ -8,18 +8,15 @@
 
 **Allonomic** is an agentic development environment and execution harness built on the principle of dynamic, adaptive intelligence operating under strict, unyielding external policy governance and supervisory constraints.
 
-Repository: [https://github.com/srossross/allonomic](https://github.com/srossross/allonomic)
 
 ---
 
 ## The Autonomy Matrix
 
-Where does Allonomic fit in the landscape of intelligent and automated systems?
-
-| | Fixed / Programmed Rules | Dynamic / Adaptive Rules |
+| | **Who acts** | **Who makes the rules** |
 | :--- | :--- | :--- |
-| **Externally Driven** | 🤖 **Automatic**<br>Operates mechanically without human intervention, but follows a strict, pre-set script dictated entirely by an external creator *(e.g., a toaster, a basic thermostat)*. | 🎮 **Allonomic**<br>Reacts and adapts dynamically, but its behavior and operational boundaries remain strictly subject to external laws, remote inputs, or environmental forces. |
-| **Internally Driven** | 🔑 **Heteronomous**<br>Capable of complex functions, but relies on an external authority or moral code to establish its operating rules and laws *(often used in philosophy/ethics)*. | 🦅 **Autonomous**<br>Self-governing and independent. It senses its environment, makes its own decisions, and alters its internal rules to achieve its goals *(e.g., an advanced AI agent)*. |
+| **Self** | 🤖 **Automatic**<br>Acts by itself, no rules to speak of *(a toaster)*. | 🦅 **Autonomous**<br>Acts by itself, writes its own rules *(an unsupervised agent)*. |
+| **Other** | 🎮 **Allomatic**<br>Moved by another, every step *(a puppet, a script)*. | ⚖️ **Allonomic**<br>Acts by itself, but the rules come from outside *(this project)*. |
 
 ---
 
@@ -72,9 +69,3 @@ bun run check:governor
 bun run test:toy
 bun run test:governed
 ```
-
----
-
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

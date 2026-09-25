@@ -150,6 +150,24 @@ export async function applyWriteApi(params: ApplyWriteParams): Promise<{ success
   return res.json();
 }
 
+export async function executeCommandApi(params: { workspaceDir?: string; command: string }): Promise<{ success: boolean; stdout: string; stderr: string }> {
+  const res = await fetch("/api/agent/run-mutating-command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(`Failed to execute command: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getDevContainerStatusApi(workspaceDir?: string): Promise<{ containerId: string | null }> {
+  const params = new URLSearchParams();
+  if (workspaceDir) params.append("workspaceDir", workspaceDir);
+  const res = await fetch(`/api/devcontainer/status?${params.toString()}`);
+  if (!res.ok) throw new Error(`Failed to get devcontainer status: HTTP ${res.status}`);
+  return res.json();
+}
+
 // Workspaces API
 export async function fetchWorkspacesApi(): Promise<WorkspacesConfig> {
   const res = await fetch("/api/workspaces");

@@ -53,7 +53,7 @@ function renderToolSummary(tc: ToolCallInfo) {
       </span>
     );
   }
-  if (["run_command", "shell", "bash"].includes(tc.name)) {
+  if (["run_read_only_command", "run_mutating_command", "shell", "bash"].includes(tc.name)) {
     const command = String(tcArguments.command || tcArguments.cmd || "");
     return (
       <span className="flex items-center gap-1.5 text-xs">

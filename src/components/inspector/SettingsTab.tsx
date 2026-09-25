@@ -154,7 +154,7 @@ export function SettingsTab({
               </button>
             </div>
             <div className="text-foreground mt-0.5 font-mono text-[11px] break-all select-all">
-              {sessionDir}
+              {sessionDir.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')}
             </div>
           </div>
 
@@ -176,7 +176,7 @@ export function SettingsTab({
               </button>
             </div>
             <div className="text-foreground mt-0.5 font-mono text-[11px] break-all select-all">
-              {turnsDir}
+              {turnsDir.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')}
             </div>
           </div>
         </div>

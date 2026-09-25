@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { ProjectsSidebar } from "@/components/sidebar/ProjectsSidebar";
 import { TabBar } from "@/components/tabs/TabBar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -90,6 +90,20 @@ export function App() {
     newTabRef.current = handleNewTab;
   }, [handleNewTab]);
 
+  const projectStates = useMemo(() => {
+    const states: Record<string, { agentState: 'idle' | 'running' | 'awaiting', hasUnread: boolean }> = {};
+    for (const proj of projects) {
+      const projTabs = tabs.filter(t => t.projectId === proj.id);
+      const isRunning = projTabs.some(t => t.loading);
+      const hasUnread = projTabs.some(t => t.hasUnread);
+      states[proj.id] = {
+        agentState: isRunning ? 'running' : (hasUnread ? 'awaiting' : 'idle'),
+        hasUnread
+      };
+    }
+    return states;
+  }, [projects, tabs]);
+
   return (
     <div className="bg-background text-foreground flex h-screen w-screen overflow-hidden antialiased">
       {/* Hidden directory input for fallback */}
@@ -119,6 +133,7 @@ export function App() {
         activeProjectId={activeProjectId}
         onSelectProject={setActiveProjectId}
         onAddProject={handleAddProject}
+        projectStates={projectStates}
       />
 
       {/* RIGHT MAIN AREA: Tabs across top, then 60/40 panels */}
@@ -132,6 +147,8 @@ export function App() {
                 title: t.title,
                 projectId: t.projectId,
                 showContext: t.showContext,
+                loading: t.loading,
+                hasUnread: t.hasUnread,
               }))}
               activeTabId={activeTabId}
               onSelectTab={setActiveTabId}

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Project } from "@/types";
-import { fetchWorkspacesApi, addWorkspaceApi, setActiveWorkspaceApi } from "@/agent/api";
+import { fetchWorkspacesApi, addWorkspaceApi, setActiveWorkspaceApi, getDevContainerStatusApi } from "@/agent/api";
 
 export function useProjectManager(onNewTab?: () => void) {
   const [projects, setProjects] = useState<Project[]>([
@@ -26,6 +26,39 @@ export function useProjectManager(onNewTab?: () => void) {
     void loadWorkspaces();
   }, []);
 
+  useEffect(() => {
+    const pollStatuses = async () => {
+      setProjects((currentProjects) => {
+        const checkAll = async () => {
+          const updated = await Promise.all(currentProjects.map(async (p) => {
+            try {
+              const res = await getDevContainerStatusApi(p.path);
+              if (p.containerId !== res.containerId || p.devcontainerStatus !== res.status) {
+                return { ...p, containerId: res.containerId, devcontainerStatus: res.status };
+              }
+            } catch {
+              if (p.containerId !== null || p.devcontainerStatus !== "not_setup") {
+                return { ...p, containerId: null, devcontainerStatus: "not_setup" };
+              }
+            }
+            return p;
+          }));
+          
+          const hasChanges = updated.some((p, i) => p.containerId !== currentProjects[i].containerId || p.devcontainerStatus !== currentProjects[i].devcontainerStatus);
+          if (hasChanges) {
+            setProjects(updated);
+          }
+        };
+        void checkAll();
+        return currentProjects;
+      });
+    };
+
+    pollStatuses();
+    const interval = setInterval(pollStatuses, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleSelectProject = useCallback(async (id: string) => {
     setActiveProjectId(id);
     try {
@@ -44,7 +77,10 @@ export function useProjectManager(onNewTab?: () => void) {
     ]);
     setActiveProjectId(newProjId);
     try {
-      await addWorkspaceApi(newProj);
+      const config = await addWorkspaceApi(newProj);
+      if (config.workspaces) {
+        setProjects(config.workspaces);
+      }
     } catch (error) {
       console.warn("[ProjectManager] Failed to persist new workspace:", error);
     }

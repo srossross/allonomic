@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { TabData, Project, ConsoleEvent, Message } from "@/types";
-import { applyWriteApi, resumeAgentPromptApi } from "@/agent/api";
+import { applyWriteApi, resumeAgentPromptApi, executeCommandApi } from "@/agent/api";
 
 interface UseToolApprovalsParams {
   activeProject: Project;
@@ -10,36 +10,73 @@ interface UseToolApprovalsParams {
 
 export function useToolApprovals({ activeProject, activeTabId, setTabs }: UseToolApprovalsParams) {
   const handleApproveTool = useCallback(
-    async (messageId: string, toolId: string, args?: Record<string, unknown>) => {
+    async (messageId: string, toolId: string, toolName: string, args?: Record<string, unknown>) => {
       if (!args) return;
-      const filePath = String(args.filePath || "");
-      if (!filePath) return;
-      const content = String(args.content || "");
-      const resultString = `Successfully wrote ${content.length} bytes to ${filePath}`;
+      
+      let resultString = "User approved";
+      let approvalEvent: ConsoleEvent | null = null;
 
       try {
-        await applyWriteApi({
-          workspaceDir: activeProject?.path,
-          filePath,
-          content,
-        });
+        if (toolName === "write_file") {
+          const filePath = String(args.filePath || "");
+          if (!filePath) return;
+          const content = String(args.content || "");
+          
+          await applyWriteApi({
+            workspaceDir: activeProject?.path,
+            filePath,
+            content,
+          });
 
-        const approvalEvent: ConsoleEvent = {
-          id: `appr-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString("en-US", {
-            hour12: false,
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          }),
-          type: "action",
-          badge: "APPROVED",
-          badgeVariant: "emerald",
-          summary: `Approved and wrote ${content.length} bytes to ${filePath}`,
-          details: { filePath, bytesWritten: content.length },
-        };
+          resultString = `Successfully wrote ${content.length} bytes to ${filePath}`;
+          approvalEvent = {
+            id: `appr-${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+            type: "action",
+            badge: "APPROVED",
+            badgeVariant: "emerald",
+            summary: `Approved and wrote ${content.length} bytes to ${filePath}`,
+            details: { filePath, bytesWritten: content.length },
+          };
+        } else if (toolName === "run_mutating_command") {
+          const command = String(args.command || "");
+          if (!command) return;
 
-        // Get the active tab to read threadId
+          try {
+            const res = await executeCommandApi({
+              workspaceDir: activeProject?.path,
+              command
+            });
+
+            resultString = (res.stdout || "") + (res.stderr ? `\n[STDERR]:\n${res.stderr}` : "");
+            if (!resultString) resultString = "Command executed successfully with no output.";
+
+            approvalEvent = {
+              id: `appr-${Date.now()}`,
+              timestamp: new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+              type: "action",
+              badge: "APPROVED",
+              badgeVariant: "emerald",
+              summary: `Approved and ran command: ${command}`,
+              details: { command, stdout: res.stdout, stderr: res.stderr },
+            };
+          } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            resultString = `[STDERR]:\nCommand failed to execute or API error: ${errorMessage}`;
+            approvalEvent = {
+              id: `appr-${Date.now()}`,
+              timestamp: new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+              type: "action",
+              badge: "FAILED",
+              badgeVariant: "rose",
+              summary: `Execution failed: ${command}`,
+              details: { command, error: errorMessage },
+            };
+          }
+        } else {
+          return; // Unknown tool
+        }
+        
         let threadId = "default";
         setTabs((previous) => {
           const t = previous.find(p => p.id === activeTabId);
@@ -66,7 +103,7 @@ export function useToolApprovals({ activeProject, activeTabId, setTabs }: UseToo
                   }),
                 };
               }),
-              consoleEvents: [...(t.consoleEvents || []), approvalEvent],
+              consoleEvents: approvalEvent ? [...(t.consoleEvents || []), approvalEvent] : t.consoleEvents,
             };
           });
         });

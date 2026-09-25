@@ -35,7 +35,7 @@ export function ConstraintsAndIntentsPanel({
   globalConstraints = [],
   consoleEvents = [],
   onClearConsole,
-  enabledTools = ["read_file", "write_file", "list_files", "run_command"],
+  enabledTools = ["read_file", "write_file", "list_files", "run_read_only_command", "run_mutating_command"],
   onToggleTool,
   onSetAllTools,
   injectors = DEFAULT_INJECTORS,

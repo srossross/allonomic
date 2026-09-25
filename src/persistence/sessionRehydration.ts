@@ -31,7 +31,7 @@ export async function rehydrateSession(
       updatedAt: new Date().toISOString(),
       model: DEFAULT_MODEL_ID,
       thinkingLevel: "Low",
-      enabledTools: ["read_file", "write_file", "list_files", "run_command"],
+      enabledTools: ["read_file", "write_file", "list_files", "run_read_only_command", "run_mutating_command"],
     };
     await saveSessionMetadata(workspaceDir, metadata);
   }

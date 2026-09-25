@@ -79,10 +79,28 @@ export const AVAILABLE_TOOLS: AgentToolMeta[] = [
     ],
   },
   {
-    name: "run_command",
+    name: "run_read_only_command",
     category: "shell",
-    description:
-      "Execute a shell command with a timeout. Only explicitly allowed commands can be run.",
+    description: "Execute a strictly read-only shell command inside the devcontainer sandbox (using bwrap). Will fail if it attempts to mutate files.",
+    parameters: [
+      {
+        name: "command",
+        type: "string",
+        required: true,
+        description: "The read-only shell command to execute",
+      },
+      {
+        name: "timeoutMs",
+        type: "number",
+        required: false,
+        description: "Timeout in milliseconds (defaults to 30000)",
+      },
+    ],
+  },
+  {
+    name: "run_mutating_command",
+    category: "shell",
+    description: "Execute a shell command that may mutate files or state. Requires user approval in manual mode.",
     parameters: [
       {
         name: "command",

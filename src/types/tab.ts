@@ -20,12 +20,13 @@ export interface TabData {
   enabledTools?: string[];
   governorState: GovernorState;
   loading: boolean;
+  hasUnread?: boolean;
   selectedModel?: string;
   thinkingLevel?: ThinkingLevel;
   executionMode?: ExecutionMode;
 }
 
-export const INITIAL_TOOLS = ["read_file", "write_file", "list_files", "run_command"];
+export const INITIAL_TOOLS = ["read_file", "write_file", "list_files", "run_read_only_command", "run_mutating_command"];
 
 export const THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   Off: 0,

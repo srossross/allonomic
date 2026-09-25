@@ -86,6 +86,10 @@ export async function saveWorkspacesConfig(config: WorkspacesConfig): Promise<vo
 
 export async function addOrUpdateWorkspace(workspace: WorkspaceItem): Promise<WorkspacesConfig> {
   const config = await loadWorkspacesConfig();
+  
+  // Always store absolute paths
+  workspace.path = path.resolve(workspace.path);
+  
   const index = config.workspaces.findIndex((w) => w.id === workspace.id || w.path === workspace.path);
 
   const updatedItem: WorkspaceItem = {

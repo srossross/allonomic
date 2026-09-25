@@ -9,7 +9,7 @@ import {
 } from "@/types";
 import { ContextView } from "./ContextView";
 import { ChatMessageItem } from "./ChatMessageItem";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposer, type PendingActionTool } from "./ChatComposer";
 
 // Re-export types for backward compatibility
 
@@ -29,7 +29,7 @@ export interface ChatPanelProps {
   executionMode?: ExecutionMode;
   onSelectExecutionMode?: (mode: ExecutionMode) => void;
   onCycleExecutionMode?: () => void;
-  onApproveTool?: (messageId: string, toolId: string, args?: Record<string, unknown>) => void;
+  onApproveTool?: (messageId: string, toolId: string, toolName: string, args?: Record<string, unknown>) => void;
   onRejectTool?: (messageId: string, toolId: string) => void;
 }
 
@@ -81,16 +81,23 @@ export function ChatPanel({
           content: m.content,
         }));
 
-  const pendingWrite = (() => {
+  const pendingAction: PendingActionTool | null = (() => {
     for (let mIndex = messages.length - 1; mIndex >= 0; mIndex--) {
       const msg = messages[mIndex];
       if (msg.role !== "assistant" || !msg.toolCalls) continue;
       for (let tcIndex = msg.toolCalls.length - 1; tcIndex >= 0; tcIndex--) {
         const tc = msg.toolCalls[tcIndex];
-        if (tc.status === "pending" && tc.name === "write_file") {
-          const toolId = tc.id || `${msg.id}-tc-${tcIndex}`;
+        if (tc.status !== "pending") continue;
+        
+        const toolId = tc.id || `${msg.id}-tc-${tcIndex}`;
+        if (tc.name === "write_file") {
           const filePath = String(tc.args?.filePath || tc.args?.path || "file");
-          return { messageId: msg.id, toolId, filePath, args: tc.args };
+          return { type: "write", messageId: msg.id, toolId, filePath, args: tc.args };
+        }
+        
+        if (tc.name === "run_mutating_command") {
+          const command = String(tc.args?.command || "");
+          return { type: "command", messageId: msg.id, toolId, command, args: tc.args };
         }
       }
     }
@@ -98,7 +105,7 @@ export function ChatPanel({
   })();
 
   return (
-    <div className="bg-background flex h-full flex-col">
+    <div className="bg-background flex flex-1 min-h-0 flex-col">
       <div className="flex-1 space-y-2.5 overflow-y-auto p-3">
         {showContext ? (
           <ContextView contextList={contextList} />
@@ -141,13 +148,13 @@ export function ChatPanel({
         executionMode={executionMode}
         onSelectExecutionMode={onSelectExecutionMode}
         onCycleExecutionMode={onCycleExecutionMode}
-        pendingWrite={pendingWrite}
-        onApprovePendingWrite={() =>
-          pendingWrite &&
-          onApproveTool?.(pendingWrite.messageId, pendingWrite.toolId, pendingWrite.args)
+        pendingAction={pendingAction}
+        onApprovePendingAction={() =>
+          pendingAction &&
+          onApproveTool?.(pendingAction.messageId, pendingAction.toolId, pendingAction.type === "write" ? "write_file" : "run_mutating_command", pendingAction.args || {})
         }
-        onRejectPendingWrite={() =>
-          pendingWrite && onRejectTool?.(pendingWrite.messageId, pendingWrite.toolId)
+        onRejectPendingAction={() =>
+          pendingAction && onRejectTool?.(pendingAction.messageId, pendingAction.toolId)
         }
       />
     </div>

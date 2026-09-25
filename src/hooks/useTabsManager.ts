@@ -1,5 +1,5 @@
 /* eslint-disable max-lines */
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   type TabData,
   type Message,
@@ -21,6 +21,11 @@ export function useTabsManager(activeProject: Project) {
   const [tabs, setTabs] = useState<TabData[]>([createInitialTab(activeProject?.id || "proj-1")]);
   const [activeTabId, setActiveTabId] = useState<string>("tab-1");
   const abortControllersReference = useRef<Map<string, AbortController>>(new Map());
+  const activeTabIdRef = useRef(activeTabId);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
 
   const { persistNewTab, persistCloseTab, persistTabSwitch, persistTabMetadata } =
     useTabsPersistence({
@@ -34,9 +39,10 @@ export function useTabsManager(activeProject: Project) {
   const handleSelectTab = useCallback(
     (tabId: string) => {
       setActiveTabId(tabId);
+      setTabs((prev) => prev.map((t) => t.id === tabId ? { ...t, hasUnread: false } : t));
       persistTabSwitch(tabId, tabs);
     },
-    [persistTabSwitch, tabs]
+    [persistTabSwitch, tabs, setTabs]
   );
 
   const handleNewTab = useCallback(() => {
@@ -178,7 +184,7 @@ export function useTabsManager(activeProject: Project) {
           thinkingBudget,
           executionMode: activeTab.executionMode || "manual",
           history: activeTab.messages.flatMap((m) => {
-            const msgs: Record<string, unknown>[] = [{ role: m.role, content: m.content }];
+            const msgs: any[] = [{ role: m.role, content: m.content }];
             if (m.toolCalls && m.toolCalls.length > 0) {
               msgs[0].tool_calls = m.toolCalls.map(tc => ({
                 id: tc.id || "unknown",
@@ -233,6 +239,7 @@ export function useTabsManager(activeProject: Project) {
               consoleEvents: [...(t.consoleEvents || []), ...(data.turnEvents || [])],
               governorState: data.governorState || t.governorState,
               loading: false,
+              hasUnread: t.id !== activeTabIdRef.current,
             };
           })
         );
@@ -272,6 +279,7 @@ export function useTabsManager(activeProject: Project) {
                   ],
                   consoleEvents: [...(t.consoleEvents || []), errorEvent],
                   loading: false,
+                  hasUnread: t.id !== activeTabIdRef.current,
                 }
               : t
           )

@@ -2,11 +2,17 @@ import { useRef } from "react";
 import { Folder, FolderPlus } from "lucide-react";
 import type { Project } from "@/types";
 
+interface ProjectState {
+  agentState: 'idle' | 'running' | 'awaiting';
+  hasUnread: boolean;
+}
+
 interface ProjectsSidebarProperties {
   projects: Project[];
   activeProjectId: string;
   onSelectProject: (projectId: string) => void;
   onAddProject: (name: string, path: string) => void;
+  projectStates?: Record<string, ProjectState>;
 }
 
 export function ProjectsSidebar({
@@ -14,6 +20,7 @@ export function ProjectsSidebar({
   activeProjectId,
   onSelectProject,
   onAddProject,
+  projectStates,
 }: ProjectsSidebarProperties) {
   const dirInputRef = useRef<HTMLInputElement>(null);
 
@@ -49,7 +56,7 @@ export function ProjectsSidebar({
       {/* Sidebar Header */}
       <div className="border-border/80 flex h-9 items-center justify-between border-b px-3">
         <div className="flex items-center gap-1.5">
-          <span className="text-foreground font-semibold text-xs tracking-tight">allonomic</span>
+          <span className="text-foreground font-semibold text-xs tracking-tight">{activeProject?.name || "atomic"}</span>
           <span className="text-muted-foreground/60 font-mono text-[10px]">/ projects</span>
         </div>
         <button
@@ -81,6 +88,8 @@ export function ProjectsSidebar({
         ) : (
           projects.map((proj) => {
             const isActive = proj.id === activeProjectId;
+            const pState = projectStates?.[proj.id];
+            
             return (
               <button
                 key={proj.id}
@@ -99,9 +108,30 @@ export function ProjectsSidebar({
                     }`}
                   />
                   <span className="flex-1 break-words font-semibold">{proj.name}</span>
+                  {pState?.hasUnread && (
+                    <div className="size-2 shrink-0 rounded-full bg-blue-500" title="Unread updates" />
+                  )}
                 </div>
-                <div className="w-full break-all font-mono text-[10px] leading-tight opacity-60">
-                  {proj.path}
+
+                <div className="mt-1 flex w-full flex-col gap-0.5 text-[10px]">
+                  {proj.devcontainerStatus && (
+                     <div className="flex items-center gap-1.5 opacity-80">
+                        <span className="text-muted-foreground w-14">Container:</span>
+                        <span>
+                          {proj.devcontainerStatus === 'running' && '🟢 Running'}
+                          {proj.devcontainerStatus === 'stopped' && '🔴 Stopped'}
+                          {proj.devcontainerStatus === 'not_setup' && '⚪ Not Set Up'}
+                        </span>
+                     </div>
+                  )}
+                  <div className="flex items-center gap-1.5 opacity-80">
+                     <span className="text-muted-foreground w-14">Agent:</span>
+                     <span>{pState?.agentState === 'running' ? '🔄 Working' : (pState?.agentState === 'awaiting' ? '💬 Awaiting User' : '💤 Idle')}</span>
+                  </div>
+                </div>
+
+                <div className="mt-1.5 w-full break-all font-mono text-[9px] leading-tight opacity-40">
+                  {proj.path.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')}
                 </div>
               </button>
             );

@@ -4,12 +4,9 @@ import { AVAILABLE_MODES, DEFAULT_MODEL_ID, type ThinkingLevel, type ExecutionMo
 import { ModeSelector } from "./ModeSelector";
 import { ModelSelector } from "./ModelSelector";
 
-export interface PendingWriteTool {
-  messageId: string;
-  toolId: string;
-  filePath: string;
-  args?: Record<string, unknown>;
-}
+export type PendingActionTool =
+  | { type: "write"; messageId: string; toolId: string; filePath: string; args?: Record<string, unknown> }
+  | { type: "command"; messageId: string; toolId: string; command: string; args?: Record<string, unknown> };
 
 interface ChatComposerProperties {
   loading: boolean;
@@ -23,9 +20,9 @@ interface ChatComposerProperties {
   executionMode?: ExecutionMode;
   onSelectExecutionMode?: (mode: ExecutionMode) => void;
   onCycleExecutionMode?: () => void;
-  pendingWrite?: PendingWriteTool | null;
-  onApprovePendingWrite?: () => void;
-  onRejectPendingWrite?: () => void;
+  pendingAction?: PendingActionTool | null;
+  onApprovePendingAction?: () => void;
+  onRejectPendingAction?: () => void;
 }
 
 export function ChatComposer({
@@ -40,18 +37,18 @@ export function ChatComposer({
   executionMode = "manual",
   onSelectExecutionMode,
   onCycleExecutionMode,
-  pendingWrite,
-  onApprovePendingWrite,
-  onRejectPendingWrite,
+  pendingAction,
+  onApprovePendingAction,
+  onRejectPendingAction,
 }: ChatComposerProperties) {
   const [input, setInput] = useState("");
   const pendingContainerReference = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (pendingWrite) {
+    if (pendingAction) {
       pendingContainerReference.current?.focus();
     }
-  }, [pendingWrite]);
+  }, [pendingAction]);
 
   const cycleMode = useCallback(() => {
     if (onCycleExecutionMode) {
@@ -105,17 +102,17 @@ export function ChatComposer({
   const handlePendingKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      onApprovePendingWrite?.();
+      onApprovePendingAction?.();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      onRejectPendingWrite?.();
+      onRejectPendingAction?.();
     }
   };
 
   return (
     <div className="border-border/80 bg-background border-t p-3">
       <div className="border-border/80 bg-background/90 focus-within:border-primary/50 relative flex flex-col gap-2 rounded-2xl border p-2.5 shadow-xs transition-colors">
-        {pendingWrite ? (
+        {pendingAction ? (
           <div
             ref={pendingContainerReference}
             tabIndex={0}
@@ -125,9 +122,9 @@ export function ChatComposer({
             <div className="flex items-center gap-1.5 font-medium text-amber-400">
               <FileCode className="size-4 shrink-0 text-amber-400" />
               <span>
-                Do you want to write to the file{" "}
+                Do you want to {pendingAction.type === "write" ? "write to the file" : "execute the command"}{" "}
                 <span className="text-foreground font-mono font-semibold underline underline-offset-2">
-                  {pendingWrite.filePath}
+                  {pendingAction.type === "write" ? pendingAction.filePath : pendingAction.command}
                 </span>
                 ?
               </span>
@@ -172,21 +169,21 @@ export function ChatComposer({
             />
           </div>
 
-          {/* Action Area: Submit/Reject when pending write, or Send/Stop */}
+          {/* Action Area: Submit/Reject when pending action, or Send/Stop */}
           <div className="flex items-center">
-            {pendingWrite ? (
+            {pendingAction ? (
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={onRejectPendingWrite}
+                  onClick={onRejectPendingAction}
                   className="border-border/60 bg-muted/60 text-muted-foreground hover:bg-destructive/20 hover:text-destructive cursor-pointer rounded-lg border px-2.5 py-1 text-xs transition-colors"
-                  title="Reject write (Esc)"
+                  title="Reject action (Esc)"
                 >
                   Reject
                 </button>
                 <button
                   type="button"
-                  onClick={onApprovePendingWrite}
+                  onClick={onApprovePendingAction}
                   className="rounded-xs bg-emerald-600 hover:bg-emerald-500 flex cursor-pointer items-center gap-1 px-3 py-1 text-xs font-medium text-white shadow-xs transition-colors"
                   title="Submit approval (Enter)"
                 >

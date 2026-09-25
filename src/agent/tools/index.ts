@@ -6,7 +6,7 @@ export function createAgentTools(
   workspaceDir: string = process.cwd(),
   executionMode: ExecutionMode = "accept edits"
 ) {
-  return [...createFilesystemTools(workspaceDir, executionMode), ...createShellTools(workspaceDir)];
+  return [...createFilesystemTools(workspaceDir, executionMode), ...createShellTools(workspaceDir, executionMode)];
 }
 
 export * from "./filesystem";
