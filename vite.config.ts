@@ -7,11 +7,11 @@ import process from "node:process";
 import fs from "node:fs";
 const host = process.env.TAURI_DEV_HOST;
 
-let environmentApiKey = process.env.API_KEY || process.env.GOOGLE_API_KEY || "";
+let environmentApiKey = process.env.API_KEY || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || "";
 if (!environmentApiKey) {
   try {
     const environmentFile = fs.readFileSync(path.resolve(import.meta.dirname, ".env"), "utf8");
-    const match = environmentFile.match(/^\s*(?:API_KEY|GOOGLE_API_KEY)\s*=\s*['"]?([^'"\n\r]+)/m);
+    const match = environmentFile.match(/^\s*(?:API_KEY|GOOGLE_API_KEY|GEMINI_API_KEY)\s*=\s*['"]?([^'"\n\r]+)/m);
     if (match) environmentApiKey = match[1];
   } catch {
     // .env file is optional or could not be read
@@ -98,6 +98,20 @@ function agentApiPlugin(): Plugin {
             return;
           }
 
+          if (
+            (pathname === "/api/models" || pathname === "/api/agent/models") &&
+            request.method === "GET"
+          ) {
+            try {
+              const { fetchAvailableModels } = await server.ssrLoadModule("./src/agent/models.ts");
+              const models = await fetchAvailableModels(environmentApiKey);
+              sendJson(res, { models });
+            } catch (error) {
+              sendError(res, error);
+            }
+            return;
+          }
+
           if (pathname === "/api/agent/injectors" && request.method === "GET") {
             try {
               const agentServer = await server.ssrLoadModule("./src/agent/server.ts");
@@ -143,6 +157,19 @@ function agentApiPlugin(): Plugin {
               await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
               await fs.promises.writeFile(targetPath, content, "utf8");
               sendJson(res, { success: true, filePath, bytesWritten: content.length });
+            } catch (error) {
+              sendError(res, error);
+            }
+            return;
+          }
+
+          if (pathname === "/api/agent/resume" && request.method === "POST") {
+            try {
+              const body = await readBody(request);
+              const { threadId, sessionId, workspaceDir, toolId, resultString } = JSON.parse(body || "{}");
+              const agentServer = await server.ssrLoadModule("./src/agent/server.ts");
+              const result = await agentServer.resumeAgentPrompt(threadId, sessionId, workspaceDir, toolId, resultString);
+              sendJson(res, result);
             } catch (error) {
               sendError(res, error);
             }
