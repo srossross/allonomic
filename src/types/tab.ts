@@ -1,12 +1,15 @@
-import type { UserIntent } from "@/interceptor-agents/governor/types";
-import { DEFAULT_MODEL_ID, type Message, type ContextMessage, type ThinkingLevel, type ExecutionMode } from "./chat";
+import type { GovernorState } from "@/core/governor/types";
+import {
+  DEFAULT_MODEL_ID,
+  type Message,
+  type ContextMessage,
+  type ThinkingLevel,
+  type ExecutionMode,
+} from "./chat";
 import type { ConsoleEvent } from "./inspector";
+import { AVAILABLE_TOOLS } from "./tools";
 
-export interface GovernorState {
-  intent_stack: UserIntent[];
-  completed_intents: UserIntent[];
-  global_constraints: string[];
-}
+export type { GovernorState } from "@/core/governor/types";
 
 export interface TabData {
   id: string;
@@ -26,7 +29,7 @@ export interface TabData {
   executionMode?: ExecutionMode;
 }
 
-export const INITIAL_TOOLS = ["read_file", "write_file", "list_files", "run_read_only_command", "run_mutating_command"];
+export const INITIAL_TOOLS = AVAILABLE_TOOLS.map((t) => t.name);
 
 export const THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   Off: 0,
@@ -35,9 +38,11 @@ export const THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   High: 8192,
 };
 
+export const PLACEHOLDER_TAB_ID = "tab-1";
+
 export function createInitialTab(projectId: string = "proj-1"): TabData {
   return {
-    id: "tab-1",
+    id: PLACEHOLDER_TAB_ID,
     title: "Chat 1",
     projectId,
     threadId: "thread-1",
@@ -71,4 +76,3 @@ export function createNewTab(projectId: string, index: number): TabData {
     executionMode: "manual",
   };
 }
-

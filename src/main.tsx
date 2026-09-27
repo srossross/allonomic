@@ -2,6 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { initLogging } from "./adapters/tauri/log";
+
+void initLogging();
 
 const rootElement = document.querySelector("#root");
 if (!rootElement) {

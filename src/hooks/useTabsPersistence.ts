@@ -1,5 +1,11 @@
 import { useEffect, useCallback } from "react";
-import { type TabData, type Project, INITIAL_TOOLS, DEFAULT_MODEL_ID } from "@/types";
+import {
+  type TabData,
+  type Project,
+  INITIAL_TOOLS,
+  DEFAULT_MODEL_ID,
+  PLACEHOLDER_TAB_ID,
+} from "@/types";
 import {
   fetchWorkspaceStateApi,
   saveWorkspaceStateApi,
@@ -10,12 +16,14 @@ import {
 
 interface UseTabsPersistenceParameters {
   activeProject: Project;
+  tabsRef: React.RefObject<TabData[]>;
   setTabs: React.Dispatch<React.SetStateAction<TabData[]>>;
   setActiveTabId: (id: string) => void;
 }
 
 export function useTabsPersistence({
   activeProject,
+  tabsRef,
   setTabs,
   setActiveTabId,
 }: UseTabsPersistenceParameters) {
@@ -58,12 +66,24 @@ export function useTabsPersistence({
                 executionMode: rehydrated.metadata.executionMode || "manual",
               });
             } catch (error) {
-              console.warn(`[TabsPersistence] Failed to rehydrate session ${sessionId}:`, error);
+              console.error(`[TabsPersistence] Failed to rehydrate session ${sessionId}:`, error);
+              globalThis.alert(
+                `Failed to rehydrate session ${sessionId}: ` +
+                  (error instanceof Error ? error.message : String(error))
+              );
             }
           }
 
           if (!isCancelled && loadedTabs.length > 0) {
-            setTabs(loadedTabs);
+            const existingProjectTabs = (tabsRef.current || []).filter(
+              (t) => t.projectId === activeProject.id
+            );
+            if (existingProjectTabs.length === 0) {
+              setTabs((prev) => [
+                ...prev.filter((t) => t.id !== PLACEHOLDER_TAB_ID),
+                ...loadedTabs,
+              ]);
+            }
             const targetActive =
               state?.activeTabId && loadedTabs.some((t) => t.id === state.activeTabId)
                 ? state.activeTabId
@@ -93,8 +113,15 @@ export function useTabsPersistence({
         };
 
         if (!isCancelled) {
-          setTabs([initialTab]);
-          setActiveTabId(initialId);
+          const existingProjectTabs = (tabsRef.current || []).filter(
+            (t) => t.projectId === activeProject.id
+          );
+          if (existingProjectTabs.length === 0) {
+            setTabs((prev) => [...prev.filter((t) => t.id !== PLACEHOLDER_TAB_ID), initialTab]);
+            setActiveTabId(initialId);
+          } else {
+            setActiveTabId(state?.activeTabId ?? existingProjectTabs[0].id);
+          }
         }
 
         void saveSessionMetadataApi(activeProject.path, {
@@ -114,7 +141,11 @@ export function useTabsPersistence({
           openTabIds: [initialId],
         });
       } catch (error) {
-        console.warn("[TabsPersistence] Failed to load workspace tabs:", error);
+        console.error("[TabsPersistence] Failed to load workspace tabs:", error);
+        globalThis.alert(
+          "Failed to load workspace tabs: " +
+            (error instanceof Error ? error.message : String(error))
+        );
       }
     }
 
@@ -123,7 +154,7 @@ export function useTabsPersistence({
     return () => {
       isCancelled = true;
     };
-  }, [activeProject, setTabs, setActiveTabId]);
+  }, [activeProject?.id, activeProject?.path, tabsRef, setTabs, setActiveTabId]);
 
   const persistNewTab = useCallback(
     (newTab: TabData, nextTabs: TabData[]) => {

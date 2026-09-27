@@ -1,16 +1,16 @@
-import fs from "node:fs/promises";
-import path from "node:path";
+import { readTextFile, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
+import { resolve, dirname } from "@tauri-apps/api/path";
 import YAML from "yaml";
 import type { WorkspaceState } from "../types/persistence";
 
-export function getWorkspaceStatePath(workspaceDir: string): string {
-  return path.join(workspaceDir, ".atomic", "workspace.yml");
+export async function getWorkspaceStatePath(workspaceDir: string): Promise<string> {
+  return await resolve(workspaceDir, ".allonomic", "workspace.yml");
 }
 
 export async function loadWorkspaceState(workspaceDir: string): Promise<WorkspaceState | null> {
-  const filePath = getWorkspaceStatePath(workspaceDir);
+  const filePath = await getWorkspaceStatePath(workspaceDir);
   try {
-    const raw = await fs.readFile(filePath, "utf8");
+    const raw = await readTextFile(filePath);
     const data: unknown = YAML.parse(raw);
     if (!data || typeof data !== "object") return null;
 
@@ -26,7 +26,16 @@ export async function loadWorkspaceState(workspaceDir: string): Promise<Workspac
       activeTabId,
       openTabIds,
     };
-  } catch {
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (
+      !errorMsg.includes("No such file") &&
+      !errorMsg.includes("os error 2") &&
+      !errorMsg.includes("system cannot find the path")
+    ) {
+      console.error("[WorkspaceState] Error loading workspace state:", error);
+      globalThis.alert("Failed to parse workspace state: " + errorMsg);
+    }
     return null;
   }
 }
@@ -35,8 +44,8 @@ export async function saveWorkspaceState(
   workspaceDir: string,
   state: WorkspaceState
 ): Promise<void> {
-  const filePath = getWorkspaceStatePath(workspaceDir);
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const filePath = await getWorkspaceStatePath(workspaceDir);
+  await mkdir(await dirname(filePath), { recursive: true });
 
   const yml = YAML.stringify({
     active_tab_id: state.activeTabId,
@@ -44,5 +53,5 @@ export async function saveWorkspaceState(
     updated_at: new Date().toISOString(),
   });
 
-  await fs.writeFile(filePath, yml, "utf8");
+  await writeTextFile(filePath, yml);
 }

@@ -1,9 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import {
-  extractRetryDelayMs,
-  isRetryableError,
-  invokeWithRetry,
-} from "../src/common/retry";
+import { extractRetryDelayMs, isRetryableError, invokeWithRetry } from "../src/core/retry";
 
 describe("Retry Utility & Rate Limit Handling Flow", () => {
   it("extracts retry delay from Google RPC error payload", () => {

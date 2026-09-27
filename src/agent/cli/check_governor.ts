@@ -1,12 +1,13 @@
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
-import { verifyConversation } from "../../interceptor-agents/governor/verifier";
+import { verifyConversation } from "../../core/governor/verifier";
 
 async function main() {
   const arguments_ = process.argv.slice(2);
   const convPath =
-    arguments_[0] || path.resolve(process.cwd(), "../toy-test-01/.atomic/conversation-32691.yml");
+    arguments_[0] ||
+    path.resolve(process.cwd(), "../toy-test-01/.allonomic/conversation-32691.yml");
   const intentPath = arguments_[1] || path.resolve(process.cwd(), "../toy-test-01/intent.yml");
 
   console.log(`Checking Governor for:`);

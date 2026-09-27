@@ -1,9 +1,6 @@
-/* eslint-disable max-lines */
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   type TabData,
-  type Message,
-  type ConsoleEvent,
   type ThinkingLevel,
   type ExecutionMode,
   type Project,
@@ -15,51 +12,69 @@ import {
   createNewTab,
 } from "@/types";
 import { runAgentPromptApi, stopAgentPromptApi } from "@/agent/api";
+import { buildHistory } from "@/core/history";
 import { useTabsPersistence } from "./useTabsPersistence";
+import { useTurnDispatch } from "./useTurnDispatch";
 
 export function useTabsManager(activeProject: Project) {
   const [tabs, setTabs] = useState<TabData[]>([createInitialTab(activeProject?.id || "proj-1")]);
   const [activeTabId, setActiveTabId] = useState<string>("tab-1");
   const abortControllersReference = useRef<Map<string, AbortController>>(new Map());
   const activeTabIdRef = useRef(activeTabId);
+  const tabsRef = useRef(tabs);
 
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
 
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
+
+  const runTurn = useTurnDispatch(setTabs, activeTabIdRef);
+
   const { persistNewTab, persistCloseTab, persistTabSwitch, persistTabMetadata } =
     useTabsPersistence({
       activeProject,
+      tabsRef,
       setTabs,
       setActiveTabId,
     });
 
-  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  const activeProjectTabs = tabs.filter((t) => t.projectId === activeProject?.id);
+  const activeTab =
+    tabs.find((t) => t.id === activeTabId && t.projectId === activeProject?.id) ||
+    activeProjectTabs.find((t) => t !== undefined) ||
+    tabs[0];
 
   const handleSelectTab = useCallback(
     (tabId: string) => {
       setActiveTabId(tabId);
-      setTabs((prev) => prev.map((t) => t.id === tabId ? { ...t, hasUnread: false } : t));
-      persistTabSwitch(tabId, tabs);
+      setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)));
+      const projectTabs = tabs.filter((t) => t.projectId === activeProject?.id);
+      persistTabSwitch(tabId, projectTabs);
     },
-    [persistTabSwitch, tabs, setTabs]
+    [persistTabSwitch, tabs, setTabs, activeProject]
   );
 
   const handleNewTab = useCallback(() => {
-    const newTab = createNewTab(activeProject.id, tabs.length + 1);
+    const projectTabs = tabs.filter((t) => t.projectId === activeProject?.id);
+    const newTab = createNewTab(activeProject.id, projectTabs.length + 1);
     const nextTabs = [...tabs, newTab];
     setTabs(nextTabs);
     setActiveTabId(newTab.id);
-    persistNewTab(newTab, nextTabs);
+    persistNewTab(newTab, [...projectTabs, newTab]);
   }, [tabs, activeProject, persistNewTab]);
-
 
   const handleCloseTab = useCallback(
     (tabIdToClose: string) => {
       setTabs((previous) => {
-        if (previous.length <= 1) return previous;
+        const projectTabs = previous.filter((t) => t.projectId === activeProject.id);
+        if (projectTabs.length <= 1 && projectTabs[0].id === tabIdToClose) return previous;
+
         const filtered = previous.filter((t) => t.id !== tabIdToClose);
-        const lastTab = filtered.at(-1);
+        const filteredProjectTabs = filtered.filter((t) => t.projectId === activeProject.id);
+        const lastTab = filteredProjectTabs.at(-1);
         const nextActiveId = activeTabId === tabIdToClose && lastTab ? lastTab.id : activeTabId;
 
         if (activeTabId === tabIdToClose && lastTab) {
@@ -67,26 +82,31 @@ export function useTabsManager(activeProject: Project) {
         }
 
         const closingTab = previous.find((t) => t.id === tabIdToClose);
-        persistCloseTab(tabIdToClose, nextActiveId, filtered, closingTab?.title || "Chat");
+        persistCloseTab(
+          tabIdToClose,
+          nextActiveId,
+          filteredProjectTabs,
+          closingTab?.title || "Chat"
+        );
 
         return filtered;
       });
     },
-    [activeTabId, persistCloseTab]
+    [activeTabId, persistCloseTab, activeProject]
   );
 
   const updateActiveTab = useCallback(
     (updater: (tab: TabData) => TabData) => {
       setTabs((previous) =>
         previous.map((t) => {
-          if (t.id !== activeTabId) return t;
+          if (t.id !== activeTab.id) return t;
           const updated = updater(t);
           persistTabMetadata(updated);
           return updated;
         })
       );
     },
-    [activeTabId, persistTabMetadata]
+    [activeTab.id, persistTabMetadata]
   );
 
   const handleSelectModel = useCallback(
@@ -113,209 +133,66 @@ export function useTabsManager(activeProject: Project) {
 
   const handleStopMessage = useCallback(async () => {
     const currentTabId = activeTab.id;
-    const currentThreadId = activeTab.threadId;
-
     const controller = abortControllersReference.current.get(currentTabId);
     if (controller) {
       controller.abort();
       abortControllersReference.current.delete(currentTabId);
     }
-
-    await stopAgentPromptApi(currentThreadId, currentTabId);
-
-    const stopEvent: ConsoleEvent = {
-      id: `stop-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString("en-US", {
-        hour12: false,
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      }),
-      type: "warning",
-      badge: "STOP",
-      badgeVariant: "destructive",
-      summary: "Generation stopped by user",
-      details: { threadId: currentThreadId },
-    };
-
+    await stopAgentPromptApi(activeTab.threadId, currentTabId);
     setTabs((previous) =>
-      previous.map((t) => {
-        if (t.id !== currentTabId) return t;
-        return {
-          ...t,
-          loading: false,
-          consoleEvents: [...(t.consoleEvents || []), stopEvent],
-        };
-      })
+      previous.map((t) => (t.id === currentTabId ? { ...t, loading: false } : t))
     );
   }, [activeTab.id, activeTab.threadId]);
 
   const handleSendMessage = useCallback(
     async (text: string) => {
-      const currentTabId = activeTab.id;
-      const currentThreadId = activeTab.threadId;
-      const currentTools = activeTab.enabledTools || INITIAL_TOOLS;
-      const currentModel = activeTab.selectedModel || DEFAULT_MODEL_ID;
-      const currentThinkingLevel = activeTab.thinkingLevel || "High";
-      const thinkingBudget = THINKING_BUDGETS[currentThinkingLevel] ?? 8192;
-      const workspaceDir = activeProject?.path;
-
-      const userMessage: Message = { id: String(Date.now()), role: "user", content: text };
-
-      setTabs((previous) =>
-        previous.map((t) =>
-          t.id === currentTabId
-            ? { ...t, messages: [...t.messages, userMessage], loading: true }
-            : t
-        )
-      );
+      const tab = activeTab;
+      const thinkingLevel = tab.thinkingLevel || "High";
+      setTabs((previous) => previous.map((t) => (t.id === tab.id ? { ...t, loading: true } : t)));
 
       const controller = new AbortController();
-      abortControllersReference.current.set(currentTabId, controller);
-
+      abortControllersReference.current.set(tab.id, controller);
       try {
-        const data = await runAgentPromptApi({
-          prompt: text,
-          threadId: currentThreadId,
-          sessionId: currentTabId,
-          workspaceDir,
-          enabledTools: currentTools,
-          modelName: currentModel,
-          thinkingBudget,
-          executionMode: activeTab.executionMode || "manual",
-          history: activeTab.messages.flatMap((m) => {
-            const msgs: any[] = [{ role: m.role, content: m.content }];
-            if (m.toolCalls && m.toolCalls.length > 0) {
-              msgs[0].tool_calls = m.toolCalls.map(tc => ({
-                id: tc.id || "unknown",
-                name: tc.name,
-                args: tc.args || {}
-              }));
-              for (const tc of m.toolCalls) {
-                msgs.push({
-                  role: "tool",
-                  content: tc.result || "",
-                  tool_call_id: tc.id || "unknown",
-                  name: tc.name
-                });
-              }
-            }
-            return msgs;
-          }),
-          signal: controller.signal,
-        });
-
-        setTabs((previous) =>
-          previous.map((t) => {
-            if (t.id !== currentTabId) return t;
-
-            const updatedMessages: Message[] = [...t.messages];
-            if (data.turnSteps && data.turnSteps.length > 0) {
-              for (const [idx, step] of data.turnSteps.entries()) {
-                updatedMessages.push({
-                  id: String(Date.now() + idx + 1),
-                  role: step.role,
-                  content: step.content,
-                  thinking: step.thinking,
-                  thinkingDurationSeconds: step.thinkingDurationSeconds || (idx === 0 ? data.thinkingDurationSeconds : undefined),
-                  toolCalls: step.toolCalls,
-                });
-              }
-            } else if (data.assistantMessage || (data.toolCalls && data.toolCalls.length > 0)) {
-              updatedMessages.push({
-                id: String(Date.now() + 1),
-                role: "assistant",
-                content: data.assistantMessage || "",
-                thinking: data.thinking || undefined,
-                thinkingDurationSeconds: data.thinkingDurationSeconds || undefined,
-                toolCalls: data.toolCalls || undefined,
-              });
-            }
-
-            return {
-              ...t,
-              messages: updatedMessages,
-              contextMessages: data.contextMessages || t.contextMessages,
-              consoleEvents: [...(t.consoleEvents || []), ...(data.turnEvents || [])],
-              governorState: data.governorState || t.governorState,
-              loading: false,
-              hasUnread: t.id !== activeTabIdRef.current,
-            };
+        await runTurn(tab.id, (onEvent) =>
+          runAgentPromptApi({
+            prompt: text,
+            threadId: tab.threadId,
+            sessionId: tab.id,
+            workspaceDir: activeProject?.path,
+            history: buildHistory(tab.messages),
+            signal: controller.signal,
+            onEvent,
+            config: {
+              enabledTools: tab.enabledTools || INITIAL_TOOLS,
+              modelName: tab.selectedModel || DEFAULT_MODEL_ID,
+              thinkingBudget: THINKING_BUDGETS[thinkingLevel] ?? 8192,
+              executionMode: tab.executionMode || "manual",
+            },
           })
         );
-      } catch (error_: unknown) {
-        if (error_ instanceof Error && error_.name === "AbortError") return;
-
-        const errorMessage = error_ instanceof Error ? error_.message : String(error_);
-        const errorStack = error_ instanceof Error ? error_.stack : undefined;
-
-        const errorEvent: ConsoleEvent = {
-          id: `err-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString("en-US", {
-            hour12: false,
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          }),
-          type: "error",
-          badge: "ERROR",
-          badgeVariant: "destructive",
-          summary: `Turn failed: ${errorMessage}`,
-          details: { error: errorMessage, stack: errorStack },
-        };
-
-        setTabs((previous) =>
-          previous.map((t) =>
-            t.id === currentTabId
-              ? {
-                  ...t,
-                  messages: [
-                    ...t.messages,
-                    {
-                      id: String(Date.now() + 1),
-                      role: "assistant",
-                      content: `Error: ${errorMessage}`,
-                    },
-                  ],
-                  consoleEvents: [...(t.consoleEvents || []), errorEvent],
-                  loading: false,
-                  hasUnread: t.id !== activeTabIdRef.current,
-                }
-              : t
-          )
-        );
       } finally {
-        abortControllersReference.current.delete(currentTabId);
+        abortControllersReference.current.delete(tab.id);
       }
     },
-    [
-      activeTab.id,
-      activeTab.threadId,
-      activeTab.enabledTools,
-      activeTab.selectedModel,
-      activeTab.thinkingLevel,
-      activeTab.executionMode,
-      activeTab.messages,
-      activeProject,
-    ]
+    [activeTab, activeProject, runTurn]
   );
 
   const handleClearConsole = useCallback(
     (targetTabId?: string) => {
-      const id = targetTabId || activeTabId;
+      const id = targetTabId || activeTab.id;
       setTabs((previous) => previous.map((t) => (t.id === id ? { ...t, consoleEvents: [] } : t)));
     },
-    [activeTabId]
+    [activeTab.id]
   );
 
   const handleToggleContext = useCallback(
     (targetTabId?: string) => {
-      const id = targetTabId || activeTabId;
+      const id = targetTabId || activeTab.id;
       setTabs((previous) =>
         previous.map((t) => (t.id === id ? { ...t, showContext: !t.showContext } : t))
       );
     },
-    [activeTabId]
+    [activeTab.id]
   );
 
   const handleToggleTool = useCallback(
@@ -355,5 +232,6 @@ export function useTabsManager(activeProject: Project) {
     handleToggleContext,
     handleToggleTool,
     handleSetAllTools,
+    runTurn,
   };
 }

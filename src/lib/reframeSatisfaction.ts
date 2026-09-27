@@ -43,6 +43,7 @@ export async function reframeSatisfaction(
   // If running in browser / WebView: delegate to server endpoint to keep client bundle clean
   if (typeof window !== "undefined") {
     try {
+      // eslint-disable-next-line no-restricted-globals
       const res = await fetch("/api/agent/reframe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

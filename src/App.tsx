@@ -4,13 +4,19 @@ import { TabBar } from "@/components/tabs/TabBar";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { ConstraintsAndIntentsPanel } from "@/components/inspector/ConstraintsAndIntentsPanel";
 import { useTabsManager } from "@/hooks/useTabsManager";
-import { useToolApprovals } from "@/hooks/useToolApprovals";
+import { usePromptResponses } from "@/hooks/usePromptResponses";
 import { useProjectManager } from "@/hooks/useProjectManager";
 import { fetchModelsApi } from "@/agent/api";
-import { AVAILABLE_MODELS, DEFAULT_MODEL_ID, type InjectorMeta, type ModelOption } from "@/types";
+import {
+  AVAILABLE_MODELS,
+  DEFAULT_MODEL_ID,
+  INITIAL_TOOLS,
+  type InjectorMeta,
+  type ModelOption,
+} from "@/types";
 
 export function App() {
-  const [injectors, setInjectors] = useState<InjectorMeta[]>([]);
+  const injectors: InjectorMeta[] = [];
   const [models, setModels] = useState<ModelOption[]>(AVAILABLE_MODELS);
 
   useEffect(() => {
@@ -27,28 +33,6 @@ export function App() {
     void loadModels();
   }, []);
 
-  useEffect(() => {
-    async function loadInjectors() {
-      try {
-        const res = await fetch("/api/agent/injectors");
-        if (res.ok) {
-          const data: unknown = await res.json();
-          if (
-            data &&
-            typeof data === "object" &&
-            "injectors" in data &&
-            Array.isArray(data.injectors)
-          ) {
-            setInjectors(data.injectors);
-          }
-        }
-      } catch {
-        // Fallback to default injectors if offline/unavailable
-      }
-    }
-    void loadInjectors();
-  }, []);
-
   const newTabRef = useRef<() => void>(() => {});
 
   const {
@@ -57,6 +41,9 @@ export function App() {
     activeProject,
     setActiveProjectId,
     handleAddProject,
+    handleRenameProject,
+    handleDeleteProject,
+    handleStartContainer,
     globalDirPickerRef,
   } = useProjectManager(() => newTabRef.current());
 
@@ -78,12 +65,14 @@ export function App() {
     handleToggleContext,
     handleToggleTool,
     handleSetAllTools,
+    runTurn,
   } = useTabsManager(activeProject);
 
-  const { handleApproveTool, handleRejectTool } = useToolApprovals({
+  const { handleRespondToPrompt } = usePromptResponses({
     activeProject,
-    activeTabId,
+    activeTab,
     setTabs,
+    runTurn,
   });
 
   useEffect(() => {
@@ -91,18 +80,26 @@ export function App() {
   }, [handleNewTab]);
 
   const projectStates = useMemo(() => {
-    const states: Record<string, { agentState: 'idle' | 'running' | 'awaiting', hasUnread: boolean }> = {};
+    const states: Record<
+      string,
+      { agentState: "idle" | "running" | "awaiting"; hasUnread: boolean }
+    > = {};
     for (const proj of projects) {
-      const projTabs = tabs.filter(t => t.projectId === proj.id);
-      const isRunning = projTabs.some(t => t.loading);
-      const hasUnread = projTabs.some(t => t.hasUnread);
+      const projTabs = tabs.filter((t) => t.projectId === proj.id);
+      const isRunning = projTabs.some((t) => t.loading);
+      const hasUnread = projTabs.some((t) => t.hasUnread);
       states[proj.id] = {
-        agentState: isRunning ? 'running' : (hasUnread ? 'awaiting' : 'idle'),
-        hasUnread
+        agentState: isRunning ? "running" : hasUnread ? "awaiting" : "idle",
+        hasUnread,
       };
     }
     return states;
   }, [projects, tabs]);
+
+  const activeProjectTabs = useMemo(
+    () => tabs.filter((t) => t.projectId === activeProject?.id),
+    [tabs, activeProject?.id]
+  );
 
   return (
     <div className="bg-background text-foreground flex h-screen w-screen overflow-hidden antialiased">
@@ -133,6 +130,9 @@ export function App() {
         activeProjectId={activeProjectId}
         onSelectProject={setActiveProjectId}
         onAddProject={handleAddProject}
+        onRenameProject={handleRenameProject}
+        onDeleteProject={handleDeleteProject}
+        onStartContainer={handleStartContainer}
         projectStates={projectStates}
       />
 
@@ -142,7 +142,7 @@ export function App() {
         <main className="flex min-h-0 w-full flex-1">
           <section className="border-border/80 flex h-full w-[60%] min-w-0 flex-col border-r">
             <TabBar
-              tabs={tabs.map((t) => ({
+              tabs={activeProjectTabs.map((t) => ({
                 id: t.id,
                 title: t.title,
                 projectId: t.projectId,
@@ -172,8 +172,7 @@ export function App() {
               executionMode={activeTab.executionMode || "manual"}
               onSelectExecutionMode={handleSelectExecutionMode}
               onCycleExecutionMode={handleCycleExecutionMode}
-              onApproveTool={handleApproveTool}
-              onRejectTool={handleRejectTool}
+              onRespondToPrompt={handleRespondToPrompt}
             />
           </section>
 
@@ -191,9 +190,7 @@ export function App() {
               globalConstraints={activeTab.governorState.global_constraints}
               consoleEvents={activeTab.consoleEvents || []}
               onClearConsole={() => handleClearConsole(activeTab.id)}
-              enabledTools={
-                activeTab.enabledTools || ["read_file", "write_file", "list_files", "run_command"]
-              }
+              enabledTools={activeTab.enabledTools || INITIAL_TOOLS}
               onToggleTool={handleToggleTool}
               onSetAllTools={handleSetAllTools}
               injectors={injectors.length > 0 ? injectors : undefined}

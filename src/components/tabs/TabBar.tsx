@@ -27,38 +27,44 @@ export function TabBar({
   onToggleContext,
 }: TabBarProperties) {
   return (
-    <div className="border-border/80 bg-muted/20 flex shrink-0 h-9 items-center overflow-x-auto border-b text-xs select-none">
+    <div className="border-border/80 bg-muted/20 flex h-9 shrink-0 items-center overflow-x-auto border-b text-xs select-none">
       {/* Tabs List */}
       <div className="flex h-full min-w-0 flex-1 items-center">
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
-          
+
           // Determine status icon
-          let StatusIcon = null;
+          let statusIcon: React.ReactNode;
           if (tab.loading) {
-            StatusIcon = <div title="Running"><Loader2 className="size-3 animate-spin text-blue-500" /></div>;
+            statusIcon = (
+              <div title="Running">
+                <Loader2 className="size-3 animate-spin text-blue-500" />
+              </div>
+            );
           } else if (tab.hasUnread) {
-            StatusIcon = <div className="size-2 rounded-full bg-blue-500" title="Awaiting" />;
+            statusIcon = <div className="size-2 rounded-full bg-blue-500" title="Awaiting" />;
           } else {
-            StatusIcon = <span className="text-[10px] opacity-50" title="Idle">💤</span>;
+            statusIcon = (
+              <span className="text-[10px] opacity-50" title="Idle">
+                💤
+              </span>
+            );
           }
 
           return (
             <div
               key={tab.id}
               onClick={() => onSelectTab(tab.id)}
-              className={`group flex h-[calc(100%+1px)] max-w-[200px] cursor-pointer items-center gap-1.5 border-r border-border/80 px-3 transition-colors ${
+              className={`group border-border/80 flex h-[calc(100%+1px)] max-w-[200px] cursor-pointer items-center gap-1.5 border-r px-3 transition-colors ${
                 isActive
-                  ? "bg-background text-foreground font-medium border-b border-b-background relative before:absolute before:inset-x-0 before:top-0 before:h-[2px] before:bg-primary"
+                  ? "bg-background text-foreground border-b-background before:bg-primary relative border-b font-medium before:absolute before:inset-x-0 before:top-0 before:h-[2px]"
                   : "text-muted-foreground hover:bg-muted/40 hover:text-foreground border-b border-b-transparent"
               }`}
             >
               <MessageSquare className="size-3 shrink-0 opacity-70" />
               <span className="flex-1 truncate text-xs">{tab.title}</span>
 
-              <div className="flex items-center justify-center w-4 shrink-0">
-                {StatusIcon}
-              </div>
+              <div className="flex w-4 shrink-0 items-center justify-center">{statusIcon}</div>
 
               {/* Context Toggle on active tab */}
               {onToggleContext && isActive && (
@@ -99,7 +105,7 @@ export function TabBar({
         {/* New Tab Button */}
         <button
           onClick={onNewTab}
-          className="text-muted-foreground hover:bg-muted/40 hover:text-foreground flex h-full items-center gap-1 px-3 transition-colors border-r border-border/80"
+          className="text-muted-foreground hover:bg-muted/40 hover:text-foreground border-border/80 flex h-full items-center gap-1 border-r px-3 transition-colors"
           title="New Tab (⌘T)"
         >
           <Plus className="size-3.5" />

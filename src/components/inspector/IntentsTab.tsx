@@ -1,4 +1,4 @@
-import type { UserIntent } from "@/interceptor-agents/governor/types";
+import type { UserIntent } from "@/core/governor/types";
 import { IntentRow } from "./IntentRow";
 
 interface IntentsTabProperties {

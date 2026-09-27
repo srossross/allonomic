@@ -1,17 +1,16 @@
-import path from "node:path";
-import * as fs from "node:fs";
-import { AgentRunner } from "../interceptor-agents/pipeline/runner";
-import { GovernorInterceptor } from "../interceptor-agents/governor/interceptor";
-import {
-  extractAssistantText,
-  extractTurnSteps,
-  extractContextMessages,
-  extractTurnToolCalls,
-  buildTurnEvents,
-} from "./turnEvents";
-import { loadSessionMetadata, saveSessionMetadata } from "../persistence/sessionMetadata";
-import type { SessionMetadata } from "../types/persistence";
-import type { ExecutionMode } from "../types";
+import { loadWorkerPrompt } from "./worker";
+import { tauriRuntime } from "../adapters/tauri/runtime";
+import { join } from "../core/paths";
+import { AgentRunner } from "../core/graph/runner";
+import { GovernorInterceptor } from "../core/governor/interceptor";
+import { resumeFromDir } from "../core/telemetry/sessionReplay";
+import { loadSessionMetadata, saveSessionMetadata } from "../core/session/metadata";
+import type { ExecutionMode, UserPromptValue } from "../types";
+import type { TurnEventListener } from "../core/turn/events";
+import { createLogger } from "../core/log";
+import type { HistoryEntry } from "../core/history";
+
+const serverLog = createLogger("agent/server");
 
 interface AgentInstance {
   governor: GovernorInterceptor;
@@ -26,40 +25,43 @@ function getSessionKey(workspaceDir: string, sessionId: string): string {
   return `${workspaceDir}:::${sessionId}`;
 }
 
-export function getAgentInstance(
-  workspaceDir?: string,
-  sessionId?: string,
-  initialTurnIndex?: number
-): AgentInstance {
-  const effectiveWorkspace = workspaceDir ? path.resolve(workspaceDir) : process.cwd();
+async function replaySession(workspaceDir: string, sessionId: string) {
+  try {
+    return await resumeFromDir(
+      tauriRuntime.fs,
+      join(workspaceDir, ".allonomic/sessions", sessionId)
+    );
+  } catch (error) {
+    serverLog.error("replay:failed", {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+}
 
+export async function getAgentInstance(
+  workspaceDir?: string,
+  sessionId?: string
+): Promise<AgentInstance> {
+  const effectiveWorkspace = workspaceDir ? await tauriRuntime.paths.resolve(workspaceDir) : ".";
   const effectiveSessionId = sessionId || "default-session";
   const key = getSessionKey(effectiveWorkspace, effectiveSessionId);
 
   const existing = runnersMap.get(key);
-  if (existing) {
-    return existing;
-  }
+  if (existing) return existing;
 
-  // Check if session directory already has turns on disk to set initialTurnIndex
-  let startingTurn = initialTurnIndex;
-  if (startingTurn === undefined) {
-    try {
-      const turnsDir = path.join(effectiveWorkspace, ".atomic/sessions", effectiveSessionId, "turns");
-      if (fs.existsSync(turnsDir)) {
-        const entries = fs.readdirSync(turnsDir).filter((e) => /^\d+$/.test(e));
-        startingTurn = entries.length + 1;
-      }
-    } catch {
-      // Fallback
-    }
-  }
-
-  const governor = new GovernorInterceptor();
+  const replay = await replaySession(effectiveWorkspace, effectiveSessionId);
+  const governor = new GovernorInterceptor({
+    runtime: tauriRuntime,
+    initialState: replay?.governorState,
+  });
   const runner = new AgentRunner({
+    runtime: tauriRuntime,
+    systemPrompt: await loadWorkerPrompt(tauriRuntime, effectiveWorkspace),
     workspaceDir: effectiveWorkspace,
     sessionId: effectiveSessionId,
-    initialTurnIndex: startingTurn ?? 1,
+    initialTurnIndex: replay?.nextTurnIndex ?? 1,
     interceptors: [governor],
   });
 
@@ -69,201 +71,112 @@ export function getAgentInstance(
     workspaceDir: effectiveWorkspace,
     sessionId: effectiveSessionId,
   };
-
   runnersMap.set(key, instance);
   return instance;
 }
 
-export interface RunAgentPromptOptions {
-  prompt: string;
-  threadId?: string;
-  sessionId?: string;
-  workspaceDir?: string;
+export interface AgentRunConfig {
+  executionMode?: ExecutionMode;
   enabledTools?: string[];
   modelName?: string;
   thinkingBudget?: number;
-  executionMode?: ExecutionMode;
-  history?: Array<{
-    role: string;
-    content: string;
-    tool_calls?: Record<string, unknown>[];
-    tool_call_id?: string;
-    name?: string;
-  }>;
+}
+
+export interface AgentCallOptions {
+  sessionId: string;
+  workspaceDir?: string;
+  history?: HistoryEntry[];
+  config?: AgentRunConfig;
+  signal?: AbortSignal;
+  onEvent?: TurnEventListener;
+}
+
+export interface AgentTurnSummary {
+  turnIndex: number;
+}
+
+async function prepareInstance(options: AgentCallOptions): Promise<AgentInstance> {
+  const instance = await getAgentInstance(options.workspaceDir, options.sessionId);
+  const { runner, governor } = instance;
+  const config = options.config ?? {};
+  runner.setExecutionMode(config.executionMode);
+  if (config.enabledTools) runner.setEnabledTools(config.enabledTools);
+  runner.setModelAndThinking(config.modelName, config.thinkingBudget ?? 1024);
+  if (config.modelName) governor.setModelName(config.modelName);
+  return instance;
+}
+
+async function touchSessionMetadata(
+  instance: AgentInstance,
+  turnIndex: number,
+  prompt: string | null,
+  config?: AgentRunConfig
+) {
+  try {
+    const existing = await loadSessionMetadata(
+      tauriRuntime.fs,
+      instance.workspaceDir,
+      instance.sessionId
+    );
+    const now = new Date().toISOString();
+    await saveSessionMetadata(tauriRuntime.fs, instance.workspaceDir, {
+      sessionId: instance.sessionId,
+      title: existing?.title || prompt?.slice(0, 30) || "Chat",
+      closed: existing?.closed ?? false,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      model: config?.modelName ?? existing?.model ?? instance.governor.getModelName(),
+      thinkingLevel: existing?.thinkingLevel || "Low",
+      enabledTools: config?.enabledTools || existing?.enabledTools,
+      turnCount: turnIndex,
+      lastPrompt: prompt ?? existing?.lastPrompt,
+    });
+  } catch (error) {
+    console.error(`[AgentServer] Failed to save session metadata:`, error);
+    globalThis.alert(
+      "Failed to save session metadata: " + (error instanceof Error ? error.message : String(error))
+    );
+  }
 }
 
 export async function runAgentPrompt(
-  promptOrOptions: string | RunAgentPromptOptions,
-  threadId?: string,
-  enabledTools?: string[],
-  modelName?: string,
-  thinkingBudget?: number
-) {
-  const options: RunAgentPromptOptions =
-    typeof promptOrOptions === "string"
-      ? {
-          prompt: promptOrOptions,
-          threadId,
-          sessionId: threadId,
-          enabledTools,
-          modelName,
-          thinkingBudget,
-        }
-      : promptOrOptions;
-
-  const {
-    prompt,
-    workspaceDir,
-    enabledTools: tools,
-    modelName: model = "gemini-3.8-flash",
-    thinkingBudget: budget,
-    executionMode,
-    history,
-  } = options;
-
-  const effectiveThreadId = options.threadId || options.sessionId || `thread-${Date.now()}`;
-  const effectiveSessionId = options.sessionId || options.threadId || `session-${Date.now()}`;
-
-  const startTime = Date.now();
-  const { runner, governor, workspaceDir: effectiveWorkspace } = getAgentInstance(
-    workspaceDir,
-    effectiveSessionId
-  );
-
-  if (executionMode) {
-    runner.setExecutionMode(executionMode);
-  }
-
-  if (tools && Array.isArray(tools)) {
-    runner.setEnabledTools(tools);
-  }
-  const effectiveThinkingBudget = budget === undefined ? 1024 : budget;
-  runner.setModelAndThinking(model, effectiveThinkingBudget);
-  if (model && typeof governor.setModelName === "function") {
-    governor.setModelName(model);
-  }
-
-  const { result, thinking, retries, turnIndex, pipelineContext } = await runner.run(
-    prompt,
-    effectiveThreadId,
-    { history }
-  );
-  const thinkingDurationSeconds = Math.max(1, Math.round((Date.now() - startTime) / 1000));
-
-  const messages = result.messages || [];
-  const assistantText = extractAssistantText(messages);
-  const contextMessages = extractContextMessages(messages);
-  const turnToolCalls = extractTurnToolCalls(messages);
-  const turnSteps = extractTurnSteps(messages);
-
-  const turnEvents = buildTurnEvents({
-    prompt,
-    threadId: effectiveThreadId,
-    governorName: governor.name || "Governor",
-    messages,
-    pipelineContext,
-    thinking,
-    retries,
-    turnIndex,
+  prompt: string,
+  threadId: string,
+  options: AgentCallOptions
+): Promise<AgentTurnSummary> {
+  const instance = await prepareInstance(options);
+  const { turnIndex } = await instance.runner.run(prompt, threadId, {
+    history: options.history,
+    signal: options.signal,
+    onEvent: options.onEvent,
   });
-
-  // Update session metadata on disk
-  try {
-    const existingMeta = await loadSessionMetadata(effectiveWorkspace, effectiveSessionId);
-    const updatedMeta: SessionMetadata = {
-      sessionId: effectiveSessionId,
-      title: existingMeta?.title || prompt.slice(0, 30) || "Chat",
-      closed: existingMeta?.closed ?? false,
-      createdAt: existingMeta?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      model,
-      thinkingLevel: existingMeta?.thinkingLevel || "Low",
-      enabledTools: tools || existingMeta?.enabledTools,
-      turnCount: turnIndex,
-      lastPrompt: prompt,
-    };
-    await saveSessionMetadata(effectiveWorkspace, updatedMeta);
-  } catch (error) {
-    console.warn(`[AgentServer] Failed to save session metadata:`, error);
-  }
-
-  return {
-    turnSteps,
-    assistantMessage: assistantText || "",
-    thinking: thinking || undefined,
-    thinkingDurationSeconds: thinking ? thinkingDurationSeconds : undefined,
-    toolCalls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
-    governorState: governor.state,
-    contextMessages,
-    turnEvents,
-  };
+  await touchSessionMetadata(instance, turnIndex, prompt, options.config);
+  return { turnIndex };
 }
 
 export async function resumeAgentPrompt(
   threadId: string,
-  sessionId: string,
-  workspaceDir: string | undefined,
   toolId: string,
-  resultString: string
-) {
-  const startTime = Date.now();
-  const { runner, governor, workspaceDir: effectiveWorkspace } = getAgentInstance(
-    workspaceDir,
-    sessionId
-  );
-
-  // 1. Update the state in the checkpointer
-  await runner.resumeTool(threadId, toolId, resultString);
-
-  // 2. Resume the runner by passing null for the prompt
-  const { result, thinking, retries, turnIndex, pipelineContext } = await runner.run(
-    null,
+  value: UserPromptValue,
+  options: AgentCallOptions
+): Promise<AgentTurnSummary> {
+  const instance = await prepareInstance(options);
+  serverLog.info("resume:start", {
     threadId,
-    {}
-  );
-
-  const thinkingDurationSeconds = Math.max(1, Math.round((Date.now() - startTime) / 1000));
-  const messages = result.messages || [];
-  const assistantText = extractAssistantText(messages);
-  const contextMessages = extractContextMessages(messages);
-  const turnToolCalls = extractTurnToolCalls(messages);
-  const turnSteps = extractTurnSteps(messages);
-
-  const turnEvents = buildTurnEvents({
-    prompt: "(Resumed)",
-    threadId,
-    governorName: governor.name || "Governor",
-    messages,
-    pipelineContext,
-    thinking,
-    retries,
-    turnIndex,
+    sessionId: options.sessionId,
+    toolId,
+    historyLength: options.history?.length ?? 0,
   });
-
-  try {
-    const existingMeta = await loadSessionMetadata(effectiveWorkspace, sessionId);
-    if (existingMeta) {
-      existingMeta.updatedAt = new Date().toISOString();
-      existingMeta.turnCount = turnIndex;
-      await saveSessionMetadata(effectiveWorkspace, existingMeta);
-    }
-  } catch (error) {
-    console.warn(`[AgentServer] Failed to save session metadata:`, error);
-  }
-
-  return {
-    turnSteps,
-    assistantMessage: assistantText || "",
-    thinking: thinking || undefined,
-    thinkingDurationSeconds: thinking ? thinkingDurationSeconds : undefined,
-    toolCalls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
-    governorState: governor.state,
-    contextMessages,
-    turnEvents,
-  };
+  const { turnIndex } = await instance.runner.resume(threadId, toolId, value, {
+    history: options.history,
+    signal: options.signal,
+    onEvent: options.onEvent,
+  });
+  await touchSessionMetadata(instance, turnIndex, null, options.config);
+  return { turnIndex };
 }
 
-export function stopAgentPrompt(threadId: string, sessionId?: string) {
+export async function stopAgentPrompt(threadId: string, sessionId?: string) {
   let isStopped = false;
   for (const instance of runnersMap.values()) {
     if (
@@ -277,13 +190,13 @@ export function stopAgentPrompt(threadId: string, sessionId?: string) {
   return isStopped;
 }
 
-export function getGovernorState(workspaceDir?: string, sessionId?: string) {
-  const { governor } = getAgentInstance(workspaceDir, sessionId);
+export async function getGovernorState(workspaceDir?: string, sessionId?: string) {
+  const { governor } = await getAgentInstance(workspaceDir, sessionId);
   return governor.state;
 }
 
-export function getInstalledInjectors(workspaceDir?: string, sessionId?: string) {
-  const { governor } = getAgentInstance(workspaceDir, sessionId);
+export async function getInstalledInjectors(workspaceDir?: string, sessionId?: string) {
+  const { governor } = await getAgentInstance(workspaceDir, sessionId);
   return [
     {
       id: "governor",

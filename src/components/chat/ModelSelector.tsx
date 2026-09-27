@@ -1,11 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { ChevronUp, Check, RefreshCw, Search, Plus, Sparkles } from "lucide-react";
-import {
-  AVAILABLE_MODELS,
-  DEFAULT_MODEL_ID,
-  type ModelOption,
-  type ThinkingLevel,
-} from "@/types";
+import { AVAILABLE_MODELS, DEFAULT_MODEL_ID, type ModelOption, type ThinkingLevel } from "@/types";
 import { fetchModelsApi } from "@/agent/api";
 import { loadCustomModels, saveCustomModel } from "./customModels";
 
@@ -132,12 +127,11 @@ export function ModelSelector({
     );
   }, [combinedModels, searchQuery]);
 
-  const currentModelObject: ModelOption =
-    combinedModels.find((m) => m.id === selectedModel) || {
-      id: selectedModel,
-      label: selectedModel,
-      hasThinking: true,
-    };
+  const currentModelObject: ModelOption = combinedModels.find((m) => m.id === selectedModel) || {
+    id: selectedModel,
+    label: selectedModel,
+    hasThinking: true,
+  };
 
   const handleCycleThinking = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -210,7 +204,7 @@ export function ModelSelector({
               className="text-muted-foreground hover:text-foreground cursor-pointer rounded-xs p-0.5 transition-colors disabled:opacity-50"
               title="Refresh models list from Google API"
             >
-              <RefreshCw className={`size-3 ${loadingModels ? "animate-spin text-primary" : ""}`} />
+              <RefreshCw className={`size-3 ${loadingModels ? "text-primary animate-spin" : ""}`} />
             </button>
           </div>
 

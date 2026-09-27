@@ -6,8 +6,10 @@ import {
   listSessions,
   rehydrateSession,
 } from "../../persistence";
+import { createNodeRuntime } from "../../adapters/node/runtime";
 
 async function main() {
+  const { fs } = createNodeRuntime();
   console.log("=== Testing Persistence System ===");
 
   // 1. Global Workspaces Config
@@ -27,7 +29,7 @@ async function main() {
 
   // 3. List Sessions in toy-test-01
   console.log(`\n3. Listing sessions in ${toyWorkspace}...`);
-  const sessions = await listSessions(toyWorkspace);
+  const sessions = await listSessions(fs, toyWorkspace);
   console.log(`Found ${sessions.length} sessions.`);
   if (sessions.length > 0) {
     console.log("First session preview:", sessions[0]);
@@ -35,7 +37,7 @@ async function main() {
 
   // 4. Rehydrate Session 'g79i6r68'
   console.log(`\n4. Rehydrating session 'g79i6r68'...`);
-  const rehydrated = await rehydrateSession(toyWorkspace, "g79i6r68");
+  const rehydrated = await rehydrateSession(fs, toyWorkspace, "g79i6r68");
   console.log("Rehydrated Metadata:", rehydrated.metadata);
   console.log(`Messages reconstructed: ${rehydrated.messages.length}`);
   console.log(`Console events reconstructed: ${rehydrated.consoleEvents.length}`);

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Copy, Check, Folder, FileText, Share2, Cpu, Sparkles } from "lucide-react";
-import type { UserIntent } from "@/interceptor-agents/governor/types";
+import type { UserIntent } from "@/core/governor/types";
 import type { Message, ThinkingLevel, ExecutionMode } from "@/types";
 
 export interface SettingsTabProps {
@@ -27,7 +27,7 @@ export function SettingsTab({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const normalizedWorkspace = workspacePath.replace(/\/+$/, "");
-  const sessionDir = `${normalizedWorkspace}/.atomic/sessions/${sessionId}`;
+  const sessionDir = `${normalizedWorkspace}/.allonomic/sessions/${sessionId}`;
   const turnsDir = `${sessionDir}/turns`;
 
   const copyToClipboard = async (text: string, key: string) => {
@@ -36,7 +36,10 @@ export function SettingsTab({
       setCopiedKey(key);
       setTimeout(() => setCopiedKey(null), 2000);
     } catch (error) {
-      console.warn("Failed to copy to clipboard:", error);
+      console.error("Failed to copy to clipboard:", error);
+      globalThis.alert(
+        "Failed to copy to clipboard: " + (error instanceof Error ? error.message : String(error))
+      );
     }
   };
 
@@ -55,9 +58,7 @@ export function SettingsTab({
         : intentStack.map((i) => `* [${i.kind}] \`${i.id}\`: ${i.description}`).join("\n"),
       "",
       "#### Global Constraints:",
-      globalConstraints.length === 0
-        ? "_None_"
-        : globalConstraints.map((c) => `* ${c}`).join("\n"),
+      globalConstraints.length === 0 ? "_None_" : globalConstraints.map((c) => `* ${c}`).join("\n"),
       "",
       "#### Message Trace:",
       messages
@@ -108,7 +109,7 @@ export function SettingsTab({
         <p className="text-muted-foreground pb-3 text-[11px]">
           Session checkpoints, turns, and telemetry are persisted inside your workspace&apos;s{" "}
           <code className="bg-muted text-foreground rounded-xs px-1 py-0.5 font-mono text-[10px]">
-            .atomic/
+            .allonomic/
           </code>{" "}
           folder.
         </p>
@@ -154,7 +155,7 @@ export function SettingsTab({
               </button>
             </div>
             <div className="text-foreground mt-0.5 font-mono text-[11px] break-all select-all">
-              {sessionDir.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')}
+              {sessionDir.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~")}
             </div>
           </div>
 
@@ -176,7 +177,7 @@ export function SettingsTab({
               </button>
             </div>
             <div className="text-foreground mt-0.5 font-mono text-[11px] break-all select-all">
-              {turnsDir.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~')}
+              {turnsDir.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~")}
             </div>
           </div>
         </div>

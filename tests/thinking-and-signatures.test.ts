@@ -4,8 +4,8 @@ import {
   extractThinking,
   extractFinalResponse,
   sanitizeMessagesForModel,
-} from "../src/interceptor-agents/pipeline/thinking";
-import { extractAssistantText } from "../src/agent/messageExtractors";
+} from "../src/core/graph/thinking";
+import { createPendingResult } from "../src/core/userPrompt";
 import {
   convertMessageContentToParts,
   _FUNCTION_CALL_THOUGHT_SIGNATURES_MAP_KEY,
@@ -84,8 +84,7 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
           (p) =>
             typeof p === "object" &&
             p !== null &&
-            ("thinking" in p ||
-              ("type" in p && (p.type === "thinking" || p.type === "thought")))
+            ("thinking" in p || ("type" in p && (p.type === "thinking" || p.type === "thought")))
         )
       ).toBe(false);
     }
@@ -174,10 +173,10 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
     }
   });
 
-  it("extractFinalResponse and extractAssistantText do not leak Turn 1 text or thinking when Turn 2 pauses on a tool", () => {
+  it("extractFinalResponse does not leak Turn 1 text or thinking when Turn 2 pauses on a tool", () => {
     // Multi-turn history:
     // Turn 1: User says Hello, AI replies with greeting
-    // Turn 2: User says append, AI calls tool, Tool pauses on PENDING_APPROVAL
+    // Turn 2: User says append, AI calls tool, Tool pauses on a pending prompt
     const multiTurnMessages = [
       new HumanMessage("Hello"),
       new AIMessage({
@@ -199,19 +198,14 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
         ],
       }),
       new ToolMessage({
-        content: "[PENDING_APPROVAL]: Write to foo.txt requires user approval",
+        content: createPendingResult({ kind: "confirm", label: "Write foo.txt" }),
         tool_call_id: "tc_123",
       }),
     ];
 
-    // extractFinalResponse must return the PENDING_APPROVAL message text instead of an empty string
     const { response, thinking } = extractFinalResponse(multiTurnMessages);
-    expect(response).toBe("[PENDING_APPROVAL]: Write to foo.txt requires user approval");
+    expect(response).toBe("Waiting for user: Write foo.txt");
     expect(thinking).toBe("Tool selection thinking trace");
     expect(thinking.includes("Greeting thinking trace")).toBe(false);
-
-    // extractAssistantText must NOT return Turn 1's greeting
-    const assistantText = extractAssistantText(multiTurnMessages);
-    expect(assistantText).toBe("");
   });
 });

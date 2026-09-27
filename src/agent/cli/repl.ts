@@ -2,9 +2,10 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { HumanMessage } from "@langchain/core/messages";
 import { createWorkerAgent } from "../worker";
+import { createNodeRuntime } from "../../adapters/node/runtime";
 
 async function main() {
-  const agent = createWorkerAgent({ enableTools: false });
+  const agent = await createWorkerAgent({ runtime: createNodeRuntime(), enableTools: false });
   const rl = readline.createInterface({ input, output });
   const threadId = `repl-${Date.now()}`;
   const config = { configurable: { thread_id: threadId } };

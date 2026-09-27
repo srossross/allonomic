@@ -3,9 +3,11 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import YAML from "yaml";
-import { appendTraceLog, saveTurnError } from "../src/telemetry/session";
+import { appendTraceLog, saveTurnError } from "../src/core/telemetry/session";
+import { createNodeRuntime } from "../src/adapters/node/runtime";
 
 describe("Telemetry Trace and Error Logging Flow", () => {
+  const { fs: store } = createNodeRuntime();
   let tempDir: string;
 
   beforeEach(async () => {
@@ -21,8 +23,8 @@ describe("Telemetry Trace and Error Logging Flow", () => {
   });
 
   it("appends timestamped entries to trace.log in real time", async () => {
-    await appendTraceLog(tempDir, "First step initiated");
-    await appendTraceLog(tempDir, "Second step completed");
+    await appendTraceLog(store, tempDir, "First step initiated");
+    await appendTraceLog(store, tempDir, "Second step completed");
 
     const logPath = path.join(tempDir, "trace.log");
     const content = await fs.readFile(logPath, "utf8");
@@ -33,11 +35,28 @@ describe("Telemetry Trace and Error Logging Flow", () => {
   });
 
   it("saveTurnError persists error.yml and user.yml even on failed turns", async () => {
-    const turnDir = await saveTurnError(tempDir, {
+    const turnDir = await saveTurnError(store, tempDir, {
       turnIndex: 2,
       userPrompt: "Do an infinite loop",
       error: new Error("Recursion limit of 25 reached without hitting a stop condition."),
-      entryToolCalls: [{ name: "push_intent" }],
+      events: [
+        {
+          seq: 0,
+          at: "2026-01-01T00:00:00.000Z",
+          turnIndex: 2,
+          type: "turn_started",
+          threadId: "t",
+          prompt: "Do an infinite loop",
+        },
+        {
+          seq: 1,
+          at: "2026-01-01T00:00:01.000Z",
+          turnIndex: 2,
+          type: "turn_failed",
+          error: "Recursion limit",
+          aborted: false,
+        },
+      ],
     });
 
     // Check user.yml
@@ -52,7 +71,12 @@ describe("Telemetry Trace and Error Logging Flow", () => {
     const errorParsed = YAML.parse(errorContent);
 
     expect(errorParsed.error).toContain("Recursion limit of 25 reached");
-    expect(errorParsed.entryToolCalls?.length).toBe(1);
+
+    const eventsParsed = YAML.parse(await fs.readFile(path.join(turnDir, "events.yml"), "utf8"));
+    expect(eventsParsed.events.map((e: { type: string }) => e.type)).toEqual([
+      "turn_started",
+      "turn_failed",
+    ]);
 
     // Check trace.log updated with [ERROR]
     const logPath = path.join(tempDir, "trace.log");

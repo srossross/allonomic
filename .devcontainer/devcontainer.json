@@ -1,6 +1,8 @@
 {
   "name": "Allonomic Tauri + Bun",
   "image": "mcr.microsoft.com/devcontainers/rust:1",
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+  "workspaceFolder": "${localWorkspaceFolder}",
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
       "version": "22"

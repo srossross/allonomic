@@ -1,5 +1,5 @@
 export * from "./worker";
-export * from "./tools";
+export * from "../core/tools";
 export * from "../interceptor-agents";
-export * from "../telemetry/logger";
+export * from "../core/telemetry/logger";
 export * from "../common/env";

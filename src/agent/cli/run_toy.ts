@@ -1,7 +1,8 @@
 import path from "node:path";
 import { HumanMessage } from "@langchain/core/messages";
 import { createWorkerAgent } from "../worker";
-import { logConversation } from "../../telemetry/logger";
+import { logConversation } from "../../core/telemetry/logger";
+import { createNodeRuntime } from "../../adapters/node/runtime";
 
 interface ChunkMessage {
   _getType?: () => string;
@@ -17,7 +18,8 @@ async function main() {
   const workspaceDir = path.resolve(process.cwd(), "../toy-test-01");
   console.log(`Target workspace: ${workspaceDir}`);
 
-  const agent = createWorkerAgent({ workspaceDir, enableTools: true });
+  const runtime = createNodeRuntime();
+  const agent = await createWorkerAgent({ runtime, workspaceDir, enableTools: true });
 
   const defaultPrompt = `page /app \n\n"we pick on sunday"\ncan you add an image to this like a box in the same style?`;
   const userPrompt = process.argv.slice(2).join(" ") || defaultPrompt;
@@ -57,7 +59,7 @@ async function main() {
   }
 
   const snapshot = await agent.compiled.getState({ configurable: { thread_id: "toy-thread" } });
-  const logPath = await logConversation(snapshot.values.messages, workspaceDir);
+  const logPath = await logConversation(runtime.fs, snapshot.values.messages, workspaceDir);
 
   console.log("\nFinished successfully.");
   console.log(`Log saved to: ${logPath}`);

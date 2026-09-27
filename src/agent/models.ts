@@ -44,6 +44,7 @@ export async function fetchAvailableModels(apiKey?: string): Promise<ModelOption
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
+    // eslint-disable-next-line no-restricted-globals
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
       {

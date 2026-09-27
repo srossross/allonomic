@@ -4,19 +4,18 @@
   <img src="./logo.jpg" alt="Allonomic Logo" width="600" />
 </p>
 
-> **allonomic**: *obeying or being subject to the laws, rules, or control of an external force*
+> **allonomic**: _obeying or being subject to the laws, rules, or control of an external force_
 
 **Allonomic** is an agentic development environment and execution harness built on the principle of dynamic, adaptive intelligence operating under strict, unyielding external policy governance and supervisory constraints.
-
 
 ---
 
 ## The Autonomy Matrix
 
-| | **Who acts** | **Who makes the rules** |
-| :--- | :--- | :--- |
-| **Self** | 🤖 **Automatic**<br>Acts by itself, no rules to speak of *(a toaster)*. | 🦅 **Autonomous**<br>Acts by itself, writes its own rules *(an unsupervised agent)*. |
-| **Other** | 🎮 **Allomatic**<br>Moved by another, every step *(a puppet, a script)*. | ⚖️ **Allonomic**<br>Acts by itself, but the rules come from outside *(this project)*. |
+|           | **Who acts**                                                             | **Who makes the rules**                                                               |
+| :-------- | :----------------------------------------------------------------------- | :------------------------------------------------------------------------------------ |
+| **Self**  | 🤖 **Automatic**<br>Acts by itself, no rules to speak of _(a toaster)_.  | 🦅 **Autonomous**<br>Acts by itself, writes its own rules _(an unsupervised agent)_.  |
+| **Other** | 🎮 **Allomatic**<br>Moved by another, every step _(a puppet, a script)_. | ⚖️ **Allonomic**<br>Acts by itself, but the rules come from outside _(this project)_. |
 
 ---
 
@@ -34,6 +33,7 @@ Allonomic bridges the power of dynamic LLM agents with rigorous external control
 ## Getting Started
 
 ### Prerequisites
+
 - [Node.js](https://nodejs.org/) (v18+) or [Bun](https://bun.sh/)
 - [Rust](https://rustup.rs/) (for Tauri desktop app)
 - Google Gemini API key (`GEMINI_API_KEY` in `.env`)

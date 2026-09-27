@@ -1,38 +1,18 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import process from "node:process";
+import { readTextFile, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
+import { join, resolve, dirname } from "@tauri-apps/api/path";
 import YAML from "yaml";
 import { getAppConfigDir } from "./configPaths";
 import type { WorkspacesConfig, WorkspaceItem } from "../types/persistence";
 
-export function getWorkspacesFilePath(): string {
-  return path.join(getAppConfigDir(), "workspaces.yml");
-}
-
-function getDefaultWorkspace(): WorkspaceItem {
-  const cwd = process.cwd();
-  const defaultName = path.basename(cwd) || "default-workspace";
-
-  return {
-    id: "proj-1",
-    name: defaultName,
-    path: cwd,
-    lastOpened: new Date().toISOString(),
-  };
-}
-
-function isWorkspaceItem(item: unknown): item is WorkspaceItem {
-  if (!item || typeof item !== "object") return false;
-  const id = Reflect.get(item, "id");
-  const name = Reflect.get(item, "name");
-  const workspacePath = Reflect.get(item, "path");
-  return typeof id === "string" && typeof name === "string" && typeof workspacePath === "string";
+export async function getWorkspacesFilePath(): Promise<string> {
+  const configDir = await getAppConfigDir();
+  return await join(configDir, "workspaces.yml");
 }
 
 export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
-  const filePath = getWorkspacesFilePath();
+  const filePath = await getWorkspacesFilePath();
   try {
-    const raw = await fs.readFile(filePath, "utf8");
+    const raw = await readTextFile(filePath);
     const data: unknown = YAML.parse(raw);
     if (data && typeof data === "object") {
       const activeRaw =
@@ -40,24 +20,88 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
       const activeWorkspaceId = typeof activeRaw === "string" ? activeRaw : undefined;
 
       const workspacesRaw = Reflect.get(data, "workspaces");
-      if (Array.isArray(workspacesRaw)) {
-        const validWorkspaces = workspacesRaw.filter(isWorkspaceItem);
+      const validWorkspaces: WorkspaceItem[] = [];
+
+      if (workspacesRaw && typeof workspacesRaw === "object") {
+        if (Array.isArray(workspacesRaw)) {
+          // Legacy array format
+          for (const w of workspacesRaw) {
+            if (!(w && typeof w === "object")) {
+              continue;
+            }
+
+            const name = Reflect.get(w, "name");
+            const workspacePath = Reflect.get(w, "path");
+            if (typeof name !== "string" || typeof workspacePath !== "string") continue;
+
+            const resolvedPath = await resolve(workspacePath);
+            validWorkspaces.push({
+              id: resolvedPath, // Upgrade id to path
+              name,
+              path: resolvedPath,
+              lastOpened: Reflect.get(w, "last_opened") || Reflect.get(w, "lastOpened"),
+              archived: Reflect.get(w, "archived"),
+            });
+          }
+        } else {
+          // New map format
+          for (const [pathKey, val] of Object.entries(workspacesRaw)) {
+            if (!(val && typeof val === "object")) {
+              continue;
+            }
+
+            const resolvedPath = await resolve(pathKey);
+            const name = Reflect.get(val, "name");
+            validWorkspaces.push({
+              id: resolvedPath,
+              path: resolvedPath,
+              name:
+                typeof name === "string" ? name : resolvedPath.split(/[/\\]/).pop() || resolvedPath,
+              lastOpened: Reflect.get(val, "last_opened") || Reflect.get(val, "lastOpened"),
+              archived: Reflect.get(val, "archived"),
+            });
+          }
+        }
+
         if (validWorkspaces.length > 0) {
+          // If activeWorkspaceId is a legacy 'proj-xxx' id, map it to the path if found
+          let resolvedActiveId = activeWorkspaceId;
+          if (activeWorkspaceId && activeWorkspaceId.startsWith("proj-")) {
+            // We can't map it easily since legacy format didn't have path in active_workspace_id.
+            // But if we upgraded it, we might just default to the first one.
+            const legacyItem = validWorkspaces.find(
+              (w) => w.id === activeWorkspaceId || w.path.includes(activeWorkspaceId)
+            );
+            resolvedActiveId = legacyItem ? legacyItem.path : validWorkspaces[0].path;
+          }
+
           return {
-            activeWorkspaceId: activeWorkspaceId || validWorkspaces[0].id,
+            activeWorkspaceId: resolvedActiveId || validWorkspaces[0].path,
             workspaces: validWorkspaces,
           };
         }
       }
     }
-  } catch {
-    // File not found or unparseable, will initialize default below
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    // Ignore "file not found" errors on first run
+    if (
+      !errorMsg.includes("No such file") &&
+      !errorMsg.includes("os error 2") &&
+      !errorMsg.includes("system cannot find the path")
+    ) {
+      console.error("[WorkspacesConfig] Error reading workspaces config:", error);
+      const shouldOverwrite = globalThis.confirm(
+        `Failed to parse workspaces configuration.\nError: ${errorMsg}\n\nDo you want to overwrite it with a blank/default state?`
+      );
+      if (!shouldOverwrite) {
+        throw error;
+      }
+    }
   }
-
-  const defaultItem = getDefaultWorkspace();
   const initialConfig: WorkspacesConfig = {
-    activeWorkspaceId: defaultItem.id,
-    workspaces: [defaultItem],
+    activeWorkspaceId: undefined,
+    workspaces: [],
   };
 
   try {
@@ -70,27 +114,34 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
 }
 
 export async function saveWorkspacesConfig(config: WorkspacesConfig): Promise<void> {
-  const filePath = getWorkspacesFilePath();
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const filePath = await getWorkspacesFilePath();
+  const dir = await dirname(filePath);
+  await mkdir(dir, { recursive: true });
+
+  const workspacesMap: Record<string, unknown> = {};
+  for (const w of config.workspaces) {
+    workspacesMap[w.path] = {
+      name: w.name,
+      ...(w.lastOpened && { last_opened: w.lastOpened }),
+      ...(w.archived && { archived: true }),
+    };
+  }
+
   const yml = YAML.stringify({
     active_workspace_id: config.activeWorkspaceId,
-    workspaces: config.workspaces.map((w) => ({
-      id: w.id,
-      name: w.name,
-      path: w.path,
-      last_opened: w.lastOpened,
-    })),
+    workspaces: workspacesMap,
   });
-  await fs.writeFile(filePath, yml, "utf8");
+  await writeTextFile(filePath, yml);
 }
 
 export async function addOrUpdateWorkspace(workspace: WorkspaceItem): Promise<WorkspacesConfig> {
   const config = await loadWorkspacesConfig();
-  
+
   // Always store absolute paths
-  workspace.path = path.resolve(workspace.path);
-  
-  const index = config.workspaces.findIndex((w) => w.id === workspace.id || w.path === workspace.path);
+  workspace.path = await resolve(workspace.path);
+  workspace.id = workspace.path; // force ID to be the path
+
+  const index = config.workspaces.findIndex((w) => w.path === workspace.path);
 
   const updatedItem: WorkspaceItem = {
     ...workspace,
@@ -103,18 +154,53 @@ export async function addOrUpdateWorkspace(workspace: WorkspaceItem): Promise<Wo
     config.workspaces[index] = updatedItem;
   }
 
-  config.activeWorkspaceId = updatedItem.id;
+  config.activeWorkspaceId = updatedItem.path;
   await saveWorkspacesConfig(config);
   return config;
 }
 
 export async function setActiveWorkspaceId(workspaceId: string): Promise<WorkspacesConfig> {
   const config = await loadWorkspacesConfig();
-  const found = config.workspaces.find((w) => w.id === workspaceId);
+  // Ensure workspaceId is a path, since UI might send an old id or path
+  const found = config.workspaces.find((w) => w.id === workspaceId || w.path === workspaceId);
   if (found) {
     found.lastOpened = new Date().toISOString();
+    config.activeWorkspaceId = found.path;
+  } else {
+    config.activeWorkspaceId = workspaceId;
   }
-  config.activeWorkspaceId = workspaceId;
+  await saveWorkspacesConfig(config);
+  return config;
+}
+
+export async function renameWorkspace(
+  workspaceId: string,
+  newName: string
+): Promise<WorkspacesConfig> {
+  const config = await loadWorkspacesConfig();
+  const found = config.workspaces.find((w) => w.id === workspaceId || w.path === workspaceId);
+  if (found) {
+    found.name = newName;
+    await saveWorkspacesConfig(config);
+  }
+  return config;
+}
+
+export async function deleteWorkspace(workspaceId: string): Promise<WorkspacesConfig> {
+  const config = await loadWorkspacesConfig();
+  const workspace = config.workspaces.find((w) => w.id === workspaceId || w.path === workspaceId);
+  if (workspace) {
+    workspace.archived = true;
+  }
+
+  const activeWorkspaces = config.workspaces.filter((w) => !w.archived);
+
+  if (
+    config.activeWorkspaceId === workspaceId ||
+    (workspace && config.activeWorkspaceId === workspace.id)
+  ) {
+    config.activeWorkspaceId = activeWorkspaces.length > 0 ? activeWorkspaces[0].path : undefined;
+  }
   await saveWorkspacesConfig(config);
   return config;
 }

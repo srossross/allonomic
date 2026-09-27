@@ -1,5 +1,5 @@
 import { ChevronRight, FileText, FileCode, Folder, Terminal, Wrench, X } from "lucide-react";
-import type { Message, ToolCallInfo } from "@/types";
+import { toolCategory, type Message, type ToolCallInfo } from "@/types";
 
 interface ChatMessageItemProperties {
   message: Message;
@@ -9,8 +9,14 @@ interface ChatMessageItemProperties {
   onToggleTool: (toolId: string) => void;
 }
 
+function verb(tc: ToolCallInfo, active: string, done: string) {
+  if (tc.status === "blocked") return "Blocked";
+  return tc.status === "running" || tc.status === "pending" ? active : done;
+}
+
 function renderToolSummary(tc: ToolCallInfo) {
   const tcArguments = tc.args ?? {};
+  const blocked = tc.status === "blocked" ? "line-through opacity-60" : "";
 
   if (["read_file", "view_file"].includes(tc.name)) {
     const filePath = String(tcArguments.filePath || tcArguments.path || "file");
@@ -20,23 +26,22 @@ function renderToolSummary(tc: ToolCallInfo) {
         : `#L${tcArguments.startLine}${tcArguments.endLine === undefined ? "" : `-${tcArguments.endLine}`}`;
     return (
       <span className="flex items-center gap-1.5 text-xs">
-        <span className="text-muted-foreground">Analyzed</span>
+        <span className="text-muted-foreground">{verb(tc, "Analyzing", "Analyzed")}</span>
         <FileText className="size-3.5 shrink-0 text-sky-500" />
-        <span className="text-foreground font-semibold">{filePath}</span>
+        <span className={`text-foreground font-semibold ${blocked}`}>{filePath}</span>
         {lineRange && <span className="text-muted-foreground font-mono">{lineRange}</span>}
       </span>
     );
   }
   if (["write_file", "replace_file_content", "edit_file"].includes(tc.name)) {
     const filePath = String(tcArguments.filePath || tcArguments.path || "file");
-    const label = tc.status === "pending" ? "Editing" : "Edited";
     return (
       <span className="flex items-center gap-1.5 text-xs">
-        <span className="text-muted-foreground">{label}</span>
+        <span className="text-muted-foreground">{verb(tc, "Editing", "Edited")}</span>
         <FileCode className="size-3.5 shrink-0 text-amber-500" />
-        <span className="text-foreground font-semibold">{filePath}</span>
+        <span className={`text-foreground font-semibold ${blocked}`}>{filePath}</span>
         {tc.status === "rejected" && (
-          <span className="rounded bg-destructive/20 border border-destructive/40 px-1.5 py-0.2 text-[10px] font-medium text-destructive">
+          <span className="bg-destructive/20 border-destructive/40 py-0.2 text-destructive rounded border px-1.5 text-[10px] font-medium">
             ✕ Rejected
           </span>
         )}
@@ -47,19 +52,19 @@ function renderToolSummary(tc: ToolCallInfo) {
     const dir = String(tcArguments.directory || ".");
     return (
       <span className="flex items-center gap-1.5 text-xs">
-        <span className="text-muted-foreground">Listed</span>
+        <span className="text-muted-foreground">{verb(tc, "Listing", "Listed")}</span>
         <Folder className="size-3.5 shrink-0 text-blue-500" />
-        <span className="text-foreground font-semibold">{dir}</span>
+        <span className={`text-foreground font-semibold ${blocked}`}>{dir}</span>
       </span>
     );
   }
-  if (["run_read_only_command", "run_mutating_command", "shell", "bash"].includes(tc.name)) {
+  if (toolCategory(tc.name) === "shell" || ["shell", "bash"].includes(tc.name)) {
     const command = String(tcArguments.command || tcArguments.cmd || "");
     return (
       <span className="flex items-center gap-1.5 text-xs">
-        <span className="text-muted-foreground">Ran</span>
+        <span className="text-muted-foreground">{verb(tc, "Running", "Ran")}</span>
         <Terminal className="size-3.5 shrink-0 text-emerald-500" />
-        <span className="text-foreground font-mono font-semibold">
+        <span className={`text-foreground font-mono font-semibold ${blocked}`}>
           {command.length > 40 ? `${command.slice(0, 40)}...` : command}
         </span>
       </span>
@@ -67,9 +72,9 @@ function renderToolSummary(tc: ToolCallInfo) {
   }
   return (
     <span className="flex items-center gap-1.5 text-xs">
-      <span className="text-muted-foreground">Called</span>
+      <span className="text-muted-foreground">{verb(tc, "Calling", "Called")}</span>
       <Wrench className="text-muted-foreground size-3.5 shrink-0" />
-      <span className="text-foreground font-semibold">{tc.name}</span>
+      <span className={`text-foreground font-semibold ${blocked}`}>{tc.name}</span>
     </span>
   );
 }
@@ -134,14 +139,24 @@ export function ChatMessageItem({
 
                     {/* Rejected Badge */}
                     {tc.status === "rejected" && (
-                      <div className="border-destructive/30 bg-destructive/5 my-1 flex items-center gap-1.5 rounded-xs border px-2 py-1 text-[11px] text-destructive">
-                        <X className="size-3 text-destructive" />
-                        <span>Write rejected by user</span>
+                      <div className="border-destructive/30 bg-destructive/5 text-destructive my-1 flex items-center gap-1.5 rounded-xs border px-2 py-1 text-[11px]">
+                        <X className="text-destructive size-3" />
+                        <span>Rejected by user</span>
                       </div>
                     )}
 
                     {isExpanded && (
                       <div className="border-border/80 bg-muted/20 mt-1 mb-2 space-y-1.5 rounded-xs border-l-2 p-2 pl-3 font-mono text-[11px] select-text">
+                        {tc.reason && (
+                          <div>
+                            <div className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">
+                              Blocked
+                            </div>
+                            <pre className="border-border/40 bg-background/60 text-foreground/80 mt-0.5 overflow-x-auto rounded-xs border p-1.5 text-[10px] whitespace-pre-wrap">
+                              {tc.reason}
+                            </pre>
+                          </div>
+                        )}
                         {tc.args !== undefined && (
                           <div>
                             <div className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">

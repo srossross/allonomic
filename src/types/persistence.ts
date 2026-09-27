@@ -7,6 +7,7 @@ export interface WorkspaceItem {
   name: string;
   path: string;
   lastOpened?: string;
+  archived?: boolean;
 }
 
 export interface WorkspacesConfig {

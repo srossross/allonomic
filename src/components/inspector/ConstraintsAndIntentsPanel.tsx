@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef } from "react";
-import type { UserIntent } from "@/interceptor-agents/governor/types";
+import type { UserIntent } from "@/core/governor/types";
 import { reframeSatisfaction } from "@/lib/reframeSatisfaction";
-import { AVAILABLE_TOOLS, DEFAULT_INJECTORS, type ConsoleEvent, type InjectorMeta, type Message, type ThinkingLevel, type ExecutionMode } from "@/types";
+import {
+  AVAILABLE_TOOLS,
+  DEFAULT_INJECTORS,
+  INITIAL_TOOLS,
+  type ConsoleEvent,
+  type InjectorMeta,
+  type Message,
+  type ThinkingLevel,
+  type ExecutionMode,
+} from "@/types";
 import { IntentsTab } from "./IntentsTab";
 import { ConstraintsTab } from "./ConstraintsTab";
 import { ToolsTab } from "./ToolsTab";
@@ -35,7 +44,7 @@ export function ConstraintsAndIntentsPanel({
   globalConstraints = [],
   consoleEvents = [],
   onClearConsole,
-  enabledTools = ["read_file", "write_file", "list_files", "run_read_only_command", "run_mutating_command"],
+  enabledTools = INITIAL_TOOLS,
   onToggleTool,
   onSetAllTools,
   injectors = DEFAULT_INJECTORS,
@@ -252,9 +261,7 @@ export function ConstraintsAndIntentsPanel({
           />
         )}
 
-        {activeTab === "constraints" && (
-          <ConstraintsTab globalConstraints={globalConstraints} />
-        )}
+        {activeTab === "constraints" && <ConstraintsTab globalConstraints={globalConstraints} />}
 
         {activeTab === "console" && (
           <ConsoleTab

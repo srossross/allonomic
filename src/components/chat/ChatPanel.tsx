@@ -5,11 +5,13 @@ import {
   type ThinkingLevel,
   type ExecutionMode,
   type ModelOption,
+  type UserPrompt,
+  type UserPromptValue,
   DEFAULT_MODEL_ID,
 } from "@/types";
 import { ContextView } from "./ContextView";
 import { ChatMessageItem } from "./ChatMessageItem";
-import { ChatComposer, type PendingActionTool } from "./ChatComposer";
+import { ChatComposer, type PendingPrompt } from "./ChatComposer";
 
 // Re-export types for backward compatibility
 
@@ -29,8 +31,12 @@ export interface ChatPanelProps {
   executionMode?: ExecutionMode;
   onSelectExecutionMode?: (mode: ExecutionMode) => void;
   onCycleExecutionMode?: () => void;
-  onApproveTool?: (messageId: string, toolId: string, toolName: string, args?: Record<string, unknown>) => void;
-  onRejectTool?: (messageId: string, toolId: string) => void;
+  onRespondToPrompt?: (
+    messageId: string,
+    toolId: string,
+    prompt: UserPrompt,
+    value: UserPromptValue
+  ) => void;
 }
 
 export function ChatPanel({
@@ -49,8 +55,7 @@ export function ChatPanel({
   executionMode = "manual",
   onSelectExecutionMode,
   onCycleExecutionMode,
-  onApproveTool,
-  onRejectTool,
+  onRespondToPrompt,
 }: ChatPanelProps) {
   const [expandedThoughtIds, setExpandedThoughtIds] = useState<Set<string>>(new Set());
   const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(new Set());
@@ -81,31 +86,22 @@ export function ChatPanel({
           content: m.content,
         }));
 
-  const pendingAction: PendingActionTool | null = (() => {
+  const pendingPrompt: PendingPrompt | null = (() => {
     for (let mIndex = messages.length - 1; mIndex >= 0; mIndex--) {
       const msg = messages[mIndex];
       if (msg.role !== "assistant" || !msg.toolCalls) continue;
       for (let tcIndex = msg.toolCalls.length - 1; tcIndex >= 0; tcIndex--) {
         const tc = msg.toolCalls[tcIndex];
-        if (tc.status !== "pending") continue;
-        
+        if (tc.status !== "pending" || !tc.prompt) continue;
         const toolId = tc.id || `${msg.id}-tc-${tcIndex}`;
-        if (tc.name === "write_file") {
-          const filePath = String(tc.args?.filePath || tc.args?.path || "file");
-          return { type: "write", messageId: msg.id, toolId, filePath, args: tc.args };
-        }
-        
-        if (tc.name === "run_mutating_command") {
-          const command = String(tc.args?.command || "");
-          return { type: "command", messageId: msg.id, toolId, command, args: tc.args };
-        }
+        return { messageId: msg.id, toolId, toolName: tc.name, prompt: tc.prompt };
       }
     }
     return null;
   })();
 
   return (
-    <div className="bg-background flex flex-1 min-h-0 flex-col">
+    <div className="bg-background flex min-h-0 flex-1 flex-col">
       <div className="flex-1 space-y-2.5 overflow-y-auto p-3">
         {showContext ? (
           <ContextView contextList={contextList} />
@@ -148,13 +144,15 @@ export function ChatPanel({
         executionMode={executionMode}
         onSelectExecutionMode={onSelectExecutionMode}
         onCycleExecutionMode={onCycleExecutionMode}
-        pendingAction={pendingAction}
-        onApprovePendingAction={() =>
-          pendingAction &&
-          onApproveTool?.(pendingAction.messageId, pendingAction.toolId, pendingAction.type === "write" ? "write_file" : "run_mutating_command", pendingAction.args || {})
-        }
-        onRejectPendingAction={() =>
-          pendingAction && onRejectTool?.(pendingAction.messageId, pendingAction.toolId)
+        pendingPrompt={pendingPrompt}
+        onRespondToPrompt={(value) =>
+          pendingPrompt &&
+          onRespondToPrompt?.(
+            pendingPrompt.messageId,
+            pendingPrompt.toolId,
+            pendingPrompt.prompt,
+            value
+          )
         }
       />
     </div>

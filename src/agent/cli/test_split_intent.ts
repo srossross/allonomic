@@ -1,23 +1,25 @@
 import path from "node:path";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
-import { GovernorInterceptor } from "../../interceptor-agents/governor/interceptor";
+import { GovernorInterceptor } from "../../core/governor/interceptor";
+import { createNodeRuntime } from "../../adapters/node/runtime";
+import type { PipelineContext } from "../../core/graph/types";
+import { createTurnEventLog } from "../../core/turn/eventLog";
 
 async function main() {
   console.log("=== Integration Test: Partial Intent Resolution (Option B) ===");
 
   const workspaceDir = path.resolve(process.cwd(), "../toy-test-01");
-  const context: {
-    workspaceDir: string;
-    threadId: string;
-    exitToolCalls: Array<{ name: string; args?: Record<string, unknown> }>;
-  } = {
+  const log = createTurnEventLog(1, []);
+  const context: PipelineContext = {
     workspaceDir,
     threadId: "test-partial-thread",
-    exitToolCalls: [],
+    turnIndex: 1,
+    events: log.sink,
   };
 
   // 1. Initialize Governor with TWO active intents from a compound prompt
   const governor = new GovernorInterceptor({
+    runtime: createNodeRuntime(),
     initialState: {
       intent_stack: [
         {
@@ -59,8 +61,8 @@ async function main() {
   console.log("\n=== Exit Verifier Verdict ===");
   console.log("Verdict:", JSON.stringify(verdict, null, 2));
 
-  console.log("\nExit Interceptor Tool Calls Recorded:");
-  console.log(JSON.stringify(context.exitToolCalls, null, 2));
+  console.log("\nExit Interceptor Events Recorded:");
+  console.log(JSON.stringify(log.events, null, 2));
 
   console.log("\n=== Final Governor State ===");
   console.log("- Active Intent Stack (remaining):");

@@ -1,12 +1,15 @@
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import type { Runtime } from "../core/ports";
 import { MessagesAnnotation, StateGraph, START, END, MemorySaver } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import type { BaseMessageLike } from "@langchain/core/messages";
-import { createAgentTools } from "./tools";
-import { logConversation } from "../telemetry/logger";
+import { createAgentTools } from "../core/tools";
+import { logConversation } from "../core/telemetry/logger";
 import { findApiKey } from "../common/env";
+import { join, dirname } from "../core/paths";
 
 export interface WorkerAgentOptions {
+  runtime: Runtime;
   workspaceDir?: string;
   modelName?: string;
   apiKey?: string;
@@ -14,26 +17,51 @@ export interface WorkerAgentOptions {
   systemPrompt?: string;
 }
 
-import * as fs from "node:fs";
-import path from "node:path";
+const AGENT_FILES = ["AGENTS.md", "CLAUDE.md"];
 
-function loadWorkerPrompt(): string {
+async function loadWorkerTemplate(runtime: Runtime): Promise<string> {
   try {
-    const promptPath = path.resolve(import.meta.dirname, "./prompts/worker.md");
-    return fs.readFileSync(promptPath, "utf8");
+    const resourcePath = await runtime.paths.resource("app-data/prompts/worker.md");
+    return await runtime.fs.readText(resourcePath);
   } catch {
     return "You are an expert software engineer with access to local tools. Inspect the codebase, read relevant files, and fulfill user requests directly.";
   }
 }
 
-export function createWorkerAgent(options: WorkerAgentOptions = {}) {
+async function loadAgentFiles(runtime: Runtime, workspaceDir: string): Promise<string[]> {
+  const sections: string[] = [];
+  let dir = await runtime.paths.resolve(workspaceDir);
+  while (true) {
+    const found: string[] = [];
+    for (const name of AGENT_FILES) {
+      const path = join(dir, name);
+      if (await runtime.fs.exists(path))
+        found.push(`# ${path}\n\n${await runtime.fs.readText(path)}`);
+    }
+    sections.unshift(...found);
+    const parent = dirname(dir);
+    if (parent === dir) return sections;
+    dir = parent;
+  }
+}
+
+export async function loadWorkerPrompt(runtime: Runtime, workspaceDir: string): Promise<string> {
+  const [template, agentFiles] = await Promise.all([
+    loadWorkerTemplate(runtime),
+    loadAgentFiles(runtime, workspaceDir),
+  ]);
+  return [template, ...agentFiles].join("\n\n");
+}
+
+export async function createWorkerAgent(options: WorkerAgentOptions) {
   const apiKey = options.apiKey || findApiKey();
   if (!apiKey)
     throw new Error("Missing Gemini API key. Set API_KEY in .env or pass it explicitly.");
 
-  const workspaceDir = options.workspaceDir || process.cwd();
+  const { runtime } = options;
+  const workspaceDir = options.workspaceDir || ".";
   const enableTools = options.enableTools ?? true;
-  const systemPrompt = options.systemPrompt ?? loadWorkerPrompt();
+  const systemPrompt = options.systemPrompt ?? (await loadWorkerPrompt(runtime, workspaceDir));
 
   const systemMessage = {
     role: "system",
@@ -43,7 +71,7 @@ export function createWorkerAgent(options: WorkerAgentOptions = {}) {
   const workflow = new StateGraph(MessagesAnnotation);
 
   if (enableTools) {
-    const tools = createAgentTools(workspaceDir);
+    const tools = createAgentTools(runtime, workspaceDir);
     const toolNode = new ToolNode(tools);
 
     const model = new ChatGoogleGenerativeAI({
@@ -88,7 +116,7 @@ export function createWorkerAgent(options: WorkerAgentOptions = {}) {
     compiled,
     async run(messages: BaseMessageLike[], threadId: string = "default") {
       const result = await compiled.invoke({ messages }, { configurable: { thread_id: threadId } });
-      const logPath = await logConversation(result.messages, workspaceDir);
+      const logPath = await logConversation(runtime.fs, result.messages, workspaceDir);
       return { result, logPath };
     },
   };

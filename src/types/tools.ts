@@ -1,4 +1,15 @@
-export type ToolCallStatus = "pending" | "approved" | "rejected" | "executed";
+import { z } from "zod";
+import { TOOL_SPECS, type ToolCategory, type ToolSpec } from "@/core/tools/specs";
+
+export type ToolCallStatus =
+  "pending" | "approved" | "rejected" | "executed" | "running" | "blocked";
+
+export type UserPrompt =
+  | { kind: "confirm"; label: string; detail?: string }
+  | { kind: "choice"; label: string; options: Array<{ value: string; label: string }> }
+  | { kind: "text"; label: string; placeholder?: string };
+
+export type UserPromptValue = boolean | string;
 
 export interface ToolCallInfo {
   id?: string;
@@ -6,11 +17,13 @@ export interface ToolCallInfo {
   args?: Record<string, unknown>;
   result?: unknown;
   status?: ToolCallStatus;
+  prompt?: UserPrompt;
+  reason?: string;
 }
 
 export interface AgentToolMeta {
   name: string;
-  category: "filesystem" | "shell" | "other";
+  category: ToolCategory;
   description: string;
   parameters: Array<{
     name: string;
@@ -20,100 +33,36 @@ export interface AgentToolMeta {
   }>;
 }
 
-export const AVAILABLE_TOOLS: AgentToolMeta[] = [
-  {
-    name: "read_file",
-    category: "filesystem",
-    description: "Read the content of a file from disk with optional line numbers (1-indexed).",
-    parameters: [
-      {
-        name: "filePath",
-        type: "string",
-        required: true,
-        description: "Relative or absolute path to the file",
-      },
-      {
-        name: "startLine",
-        type: "number",
-        required: false,
-        description: "Optional starting line number (1-indexed)",
-      },
-      {
-        name: "endLine",
-        type: "number",
-        required: false,
-        description: "Optional ending line number (1-indexed)",
-      },
-    ],
-  },
-  {
-    name: "write_file",
-    category: "filesystem",
-    description: "Write or overwrite content to a file in the workspace.",
-    parameters: [
-      {
-        name: "filePath",
-        type: "string",
-        required: true,
-        description: "Relative path to the file",
-      },
-      {
-        name: "content",
-        type: "string",
-        required: true,
-        description: "The full content to write to the file",
-      },
-    ],
-  },
-  {
-    name: "list_files",
-    category: "filesystem",
-    description: "List files and directories in a given path.",
-    parameters: [
-      {
-        name: "directory",
-        type: "string",
-        required: false,
-        description: "Directory to list (defaults to workspace root)",
-      },
-    ],
-  },
-  {
-    name: "run_read_only_command",
-    category: "shell",
-    description: "Execute a strictly read-only shell command inside the devcontainer sandbox (using bwrap). Will fail if it attempts to mutate files.",
-    parameters: [
-      {
-        name: "command",
-        type: "string",
-        required: true,
-        description: "The read-only shell command to execute",
-      },
-      {
-        name: "timeoutMs",
-        type: "number",
-        required: false,
-        description: "Timeout in milliseconds (defaults to 30000)",
-      },
-    ],
-  },
-  {
-    name: "run_mutating_command",
-    category: "shell",
-    description: "Execute a shell command that may mutate files or state. Requires user approval in manual mode.",
-    parameters: [
-      {
-        name: "command",
-        type: "string",
-        required: true,
-        description: "The shell command to execute",
-      },
-      {
-        name: "timeoutMs",
-        type: "number",
-        required: false,
-        description: "Timeout in milliseconds (defaults to 30000)",
-      },
-    ],
-  },
-];
+function baseTypeName(field: z.ZodTypeAny): string {
+  let current = field;
+  while (
+    current instanceof z.ZodOptional ||
+    current instanceof z.ZodDefault ||
+    current instanceof z.ZodNullable
+  ) {
+    current = current._def.innerType;
+  }
+  return String(current._def.typeName).replace(/^Zod/, "").toLowerCase();
+}
+
+function toMeta({ name, category, description, schema }: ToolSpec): AgentToolMeta {
+  return {
+    name,
+    category,
+    description,
+    parameters: Object.entries<z.ZodTypeAny>(schema.shape).map(([parameterName, field]) => ({
+      name: parameterName,
+      type: baseTypeName(field),
+      required: !field.isOptional(),
+      description: field.description ?? "",
+    })),
+  };
+}
+
+export const AVAILABLE_TOOLS: AgentToolMeta[] = Object.values(TOOL_SPECS).map((spec) =>
+  toMeta(spec)
+);
+
+export function toolCategory(name: string): ToolCategory | undefined {
+  return AVAILABLE_TOOLS.find((t) => t.name === name)?.category;
+}

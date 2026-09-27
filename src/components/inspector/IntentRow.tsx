@@ -7,7 +7,7 @@ import {
   CheckSquare,
   Circle,
 } from "lucide-react";
-import type { UserIntent } from "@/interceptor-agents/governor/types";
+import type { UserIntent } from "@/core/governor/types";
 
 interface IntentRowProperties {
   intent: UserIntent;
