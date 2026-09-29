@@ -1,17 +1,20 @@
 import type { HistoryEntry } from "../core/history";
 import { tauriRuntime } from "../adapters/tauri/runtime";
 import {
-  resolveDevContainer,
-  ensureContainer,
-  type DevContainerStatus,
-} from "../core/devcontainer";
-import {
   runAgentPrompt,
   stopAgentPrompt,
-  resumeAgentPrompt,
-  type AgentRunConfig,
+  answerAgentPrompt,
+  recoverAgentSession,
+  listInterceptors,
   type AgentTurnSummary,
 } from "./server";
+import type { InterceptorInfo } from "../core/graph/types";
+import {
+  resolveSettings,
+  updateSessionSettings,
+  type Settings,
+  type SettingsPatch,
+} from "../core/config/settings";
 import type {
   WorkspacesConfig,
   WorkspaceItem,
@@ -21,28 +24,22 @@ import type {
   ModelOption,
   UserPromptValue,
 } from "@/types";
-import { AVAILABLE_MODELS } from "@/types";
-import type { TurnEventListener } from "@/core/turn/events";
+import { loadModels } from "../core/models";
+import type { RecoverableCall, TurnEventListener } from "@/core/turn/events";
 
-export type { AgentRunConfig, AgentTurnSummary } from "./server";
+export type { AgentTurnSummary } from "./server";
 
 interface AgentCallParams {
   threadId: string;
   sessionId: string;
   workspaceDir?: string;
   history?: HistoryEntry[];
-  config?: AgentRunConfig;
   signal?: AbortSignal;
   onEvent?: TurnEventListener;
 }
 
 export interface RunAgentParams extends AgentCallParams {
   prompt: string;
-}
-
-export interface RespondToPromptParams extends AgentCallParams {
-  toolId: string;
-  value: UserPromptValue;
 }
 
 export async function runAgentPromptApi({
@@ -57,31 +54,32 @@ export async function stopAgentPromptApi(threadId: string, sessionId?: string): 
   await stopAgentPrompt(threadId, sessionId);
 }
 
-export async function respondToPromptApi({
+export interface RecoverSessionParams extends AgentCallParams {
+  calls: RecoverableCall[];
+}
+
+export async function recoverSessionApi({
   threadId,
-  toolId,
-  value,
+  calls,
   ...options
-}: RespondToPromptParams): Promise<AgentTurnSummary> {
-  return await resumeAgentPrompt(threadId, toolId, value, options);
+}: RecoverSessionParams): Promise<AgentTurnSummary> {
+  return await recoverAgentSession(threadId, calls, options);
 }
 
-export async function getDevContainerStatusApi(
-  workspaceDir?: string
-): Promise<{ containerId: string | null; status?: DevContainerStatus }> {
-  if (!workspaceDir) {
-    return { containerId: null, status: "not_setup" };
-  }
-  try {
-    const { containerId, status } = await resolveDevContainer(tauriRuntime, workspaceDir);
-    return { containerId, status };
-  } catch {
-    return { containerId: null, status: "not_setup" };
-  }
+export async function fetchInterceptorsApi(
+  workspaceDir: string | undefined,
+  sessionId: string
+): Promise<InterceptorInfo[]> {
+  return await listInterceptors(workspaceDir, sessionId);
 }
 
-export async function startContainerApi(workspaceDir: string): Promise<void> {
-  await ensureContainer(tauriRuntime, workspaceDir);
+export async function answerPromptApi(
+  workspaceDir: string | undefined,
+  sessionId: string,
+  promptId: string,
+  value: UserPromptValue
+): Promise<void> {
+  await answerAgentPrompt(workspaceDir, sessionId, promptId, value);
 }
 
 import {
@@ -116,7 +114,11 @@ export async function deleteWorkspaceApi(workspaceId: string): Promise<Workspace
   return await deleteWorkspace(workspaceId);
 }
 
-import { loadWorkspaceState, saveWorkspaceState } from "../persistence/workspaceState";
+import {
+  loadWorkspaceState,
+  saveWorkspaceState,
+  saveInspectorTabs,
+} from "../persistence/workspaceState";
 
 // Workspace State API (<workspaceDir>/.allonomic/workspace.yml)
 export async function fetchWorkspaceStateApi(
@@ -136,6 +138,17 @@ export async function saveWorkspaceStateApi(
     console.error("Failed to save workspace state:", error);
     globalThis.alert(
       "Failed to save workspace state: " + (error instanceof Error ? error.message : String(error))
+    );
+  }
+}
+
+export async function saveInspectorTabsApi(workspaceDir: string, tabs: string[]): Promise<void> {
+  try {
+    await saveInspectorTabs(workspaceDir, tabs);
+  } catch (error) {
+    console.error("Failed to save inspector tabs:", error);
+    globalThis.alert(
+      "Failed to save inspector tabs: " + (error instanceof Error ? error.message : String(error))
     );
   }
 }
@@ -172,7 +185,30 @@ export async function saveSessionMetadataApi(
   }
 }
 
+export async function fetchSessionSettingsApi(
+  workspaceDir: string,
+  sessionId: string
+): Promise<Settings> {
+  return await resolveSettings(tauriRuntime, workspaceDir, sessionId);
+}
+
+export async function updateSessionSettingsApi(
+  workspaceDir: string,
+  sessionId: string,
+  patch: SettingsPatch
+): Promise<Settings> {
+  return await updateSessionSettings(tauriRuntime, workspaceDir, sessionId, patch);
+}
+
 // Models API
-export async function fetchModelsApi(): Promise<ModelOption[]> {
-  return AVAILABLE_MODELS;
+export async function fetchModelsApi(workspaceDir?: string): Promise<ModelOption[]> {
+  return await loadModels(tauriRuntime, workspaceDir);
+}
+
+export async function fetchPathRootsApi(): Promise<{ app: string; user: string }> {
+  const [app, user] = await Promise.all([
+    tauriRuntime.paths.resource("app-data"),
+    tauriRuntime.paths.home(),
+  ]);
+  return { app, user };
 }

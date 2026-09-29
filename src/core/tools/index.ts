@@ -1,21 +1,24 @@
-import type { ExecutionMode } from "@/types";
+import { DEFAULT_EXECUTION_MODE } from "@/types";
 import type { Runtime } from "../ports";
+import type { ExecutionModeSource } from "./approval";
 import { createFilesystemTools } from "./filesystem";
 import { createShellTools } from "./shell";
+import { createPermissionTools } from "./permissions";
 
 export interface AgentToolOptions {
-  approved?: boolean;
+  sessionId?: string;
 }
 
 export function createAgentTools(
   runtime: Runtime,
   workspaceDir: string = ".",
-  executionMode: ExecutionMode = "accept edits",
+  executionMode: ExecutionModeSource = DEFAULT_EXECUTION_MODE,
   options: AgentToolOptions = {}
 ) {
   return [
     ...createFilesystemTools(runtime, workspaceDir, executionMode, options),
     ...createShellTools(runtime, workspaceDir, executionMode, options),
+    ...createPermissionTools(runtime, workspaceDir, options),
   ];
 }
 

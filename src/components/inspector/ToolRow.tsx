@@ -77,11 +77,11 @@ export function ToolRow({
               >
                 {tool.name}
               </span>
-              <span className="bg-muted py-0.2 text-muted-foreground rounded-xs px-1 font-mono text-[9px] tracking-wider uppercase">
+              <span className="bg-muted py-0.2 text-muted-foreground text-2xs rounded-xs px-1 font-mono tracking-wider uppercase">
                 {tool.category}
               </span>
             </div>
-            <p className="text-muted-foreground mt-0.5 truncate text-[10px] leading-tight">
+            <p className="text-muted-foreground text-2xs mt-0.5 truncate leading-tight">
               {tool.description}
             </p>
           </div>
@@ -100,18 +100,18 @@ export function ToolRow({
 
       {isExpanded && (
         <div className="border-primary/40 bg-muted/25 mx-2 mt-0.5 mb-1.5 space-y-1.5 rounded-xs border-l-2 p-2 font-mono text-xs select-text">
-          <div className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">
+          <div className="text-muted-foreground text-2xs font-semibold tracking-wider uppercase">
             Parameters ({tool.parameters.length})
           </div>
           <div className="space-y-1">
             {tool.parameters.map((parameter, pIndex) => (
-              <div key={pIndex} className="text-[11px] leading-snug">
+              <div key={pIndex} className="text-xs leading-snug">
                 <span className="text-foreground font-semibold">{parameter.name}</span>
-                <span className="text-muted-foreground ml-1 text-[10px]">
+                <span className="text-muted-foreground text-2xs ml-1">
                   ({parameter.type}
                   {parameter.required ? ", required" : ", optional"})
                 </span>
-                <div className="text-muted-foreground/80 pl-2 text-[10px]">
+                <div className="text-muted-foreground/80 text-2xs pl-2">
                   {parameter.description}
                 </div>
               </div>

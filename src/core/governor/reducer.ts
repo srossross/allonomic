@@ -3,8 +3,14 @@ import {
   intentKindSchema,
   type GovernorAction,
   type GovernorState,
+  type IntentKind,
   type UserIntent,
 } from "./types";
+import {
+  addFalseCompletion,
+  declareNoFalseCompletions,
+  resolveFalseCompletion,
+} from "./falseCompletionReducer";
 
 export interface GovernorActionOutcome {
   state: GovernorState;
@@ -14,7 +20,7 @@ export interface GovernorActionOutcome {
 export const EMPTY_GOVERNOR_STATE: GovernorState = {
   intent_stack: [],
   completed_intents: [],
-  global_constraints: [],
+  false_completions: [],
 };
 
 function replaceIntent(stack: UserIntent[], index: number, next: UserIntent): UserIntent[] {
@@ -29,6 +35,39 @@ function pushIntent(state: GovernorState, intent: UserIntent): GovernorActionOut
       intent,
       message: `Created intent '${intent.id}' (${intent.kind}): "${intent.description}"`,
     },
+  };
+}
+
+function updateIntent(
+  state: GovernorState,
+  id: string,
+  changes: {
+    description?: string;
+    kind?: IntentKind;
+    completed_when?: string;
+    what_changed?: string;
+  }
+): GovernorActionOutcome {
+  const index = state.intent_stack.findIndex((intent) => intent.id === id);
+  if (index === -1) {
+    return {
+      state,
+      result: { status: "not_found", message: `Intent with id '${id}' not found.` },
+    };
+  }
+  const current = state.intent_stack[index];
+  const updated: UserIntent = {
+    ...current,
+    description: changes.description ?? current.description,
+    kind: changes.kind ?? current.kind,
+    completed_when: changes.completed_when ?? current.completed_when,
+    changelog: changes.what_changed
+      ? [...current.changelog, changes.what_changed]
+      : current.changelog,
+  };
+  return {
+    state: { ...state, intent_stack: replaceIntent(state.intent_stack, index, updated) },
+    result: { status: "updated", intent: updated },
   };
 }
 
@@ -50,65 +89,6 @@ function popIntent(state: GovernorState, id: string | undefined): GovernorAction
   return {
     state: { ...state, intent_stack: state.intent_stack.filter((_, index_) => index_ !== index) },
     result: { status: "popped", id: removed.id, description: removed.description },
-  };
-}
-
-function addConstraint(
-  state: GovernorState,
-  constraint: string,
-  target: string
-): GovernorActionOutcome {
-  const targetIndex =
-    target === "global" ? -1 : state.intent_stack.findIndex((intent) => intent.id === target);
-  const index =
-    target !== "global" && targetIndex === -1 ? state.intent_stack.length - 1 : targetIndex;
-  if (index === -1) {
-    return {
-      state: { ...state, global_constraints: [...state.global_constraints, constraint] },
-      result: { status: "added", target: "global", constraint },
-    };
-  }
-  const intent = state.intent_stack[index];
-  return {
-    state: {
-      ...state,
-      intent_stack: replaceIntent(state.intent_stack, index, {
-        ...intent,
-        constraints: [...intent.constraints, constraint],
-      }),
-    },
-    result: { status: "added", target: intent.id, constraint },
-  };
-}
-
-function removeConstraint(
-  state: GovernorState,
-  constraint: string,
-  target: string
-): GovernorActionOutcome {
-  if (target === "global") {
-    return {
-      state: {
-        ...state,
-        global_constraints: state.global_constraints.filter((c) => c !== constraint),
-      },
-      result: { status: "removed", target: "global", constraint },
-    };
-  }
-  const index = state.intent_stack.findIndex((intent) => intent.id === target);
-  if (index === -1) {
-    return { state, result: { status: "not_found", message: `Target '${target}' not found.` } };
-  }
-  const intent = state.intent_stack[index];
-  return {
-    state: {
-      ...state,
-      intent_stack: replaceIntent(state.intent_stack, index, {
-        ...intent,
-        constraints: intent.constraints.filter((c) => c !== constraint),
-      }),
-    },
-    result: { status: "removed", target, constraint },
   };
 }
 
@@ -146,14 +126,32 @@ export function applyGovernorAction(
     case "push_intent": {
       return pushIntent(state, action.intent);
     }
+    case "update_intent": {
+      return updateIntent(state, action.id, {
+        description: action.description,
+        kind: action.kind,
+        completed_when: action.completed_when,
+        what_changed: action.what_changed,
+      });
+    }
+    case "add_false_completion": {
+      return addFalseCompletion(state, action.falseCompletion);
+    }
+    case "no_false_completions": {
+      return declareNoFalseCompletions(state, action.intent_id);
+    }
+    case "resolve_false_completion": {
+      return resolveFalseCompletion(
+        state,
+        action.id,
+        action.resolution,
+        action.evidence,
+        action.reason,
+        action.still_assumed
+      );
+    }
     case "pop_intent": {
       return popIntent(state, action.id);
-    }
-    case "add_constraint": {
-      return addConstraint(state, action.constraint, action.target);
-    }
-    case "remove_constraint": {
-      return removeConstraint(state, action.constraint, action.target);
     }
     case "resolve_intent": {
       return resolveIntent(state, action.id);
@@ -179,20 +177,13 @@ export function governorActionFromCall(
           id: stringArg(args, "id") ?? `itnt_${nanoid()}`,
           kind: kind.success ? kind.data : "other",
           description: stringArg(args, "description") ?? "",
-          constraints: Array.isArray(args.constraints) ? args.constraints.map(String) : [],
+          completed_when: stringArg(args, "completed_when") ?? null,
+          changelog: [],
         },
       };
     }
     case "pop_intent": {
       return { type: "pop_intent", id: stringArg(args, "id") };
-    }
-    case "add_constraint":
-    case "remove_constraint": {
-      return {
-        type: name,
-        constraint: stringArg(args, "constraint") ?? "",
-        target: stringArg(args, "target") ?? "global",
-      };
     }
     case "resolve_intent": {
       const id = stringArg(args, "id");

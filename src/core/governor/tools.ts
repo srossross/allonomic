@@ -18,16 +18,11 @@ export function createGovernorPromptTools(
   dispatch: GovernorDispatch,
   signalFinish: (reasoning?: string) => void
 ): StructuredTool[] {
-  const constraintsSchema = z
-    .array(z.string())
-    .optional()
-    .describe("Optional initial constraints attached to this intent.");
-
   const pushIntent = tool(
-    async ({ id, kind, description, constraints = [] }) =>
+    async ({ id, kind, description, completed_when }) =>
       dispatch({
         type: "push_intent",
-        intent: { id: id || `itnt_${nanoid()}`, kind, description, constraints },
+        intent: { id: id || `itnt_${nanoid()}`, kind, description, completed_when, changelog: [] },
       }),
     {
       name: "push_intent",
@@ -40,9 +35,38 @@ export function createGovernorPromptTools(
         description: z
           .string()
           .describe(
-            "User goal from the human perspective (e.g. 'User wants to know if the agent is capable of listing the directory')."
+            "User goal from the human perspective (e.g. 'User wants to know if you are capable of listing the directory')."
           ),
-        constraints: constraintsSchema,
+        completed_when: z
+          .string()
+          .describe(
+            "One short line: the observable condition that means this intent is satisfied (e.g. 'The user has been told whether you can list the directory')."
+          ),
+      }),
+    }
+  );
+
+  const updateIntent = tool(
+    async ({ id, description, kind, completed_when, what_changed }) =>
+      dispatch({ type: "update_intent", id, description, kind, completed_when, what_changed }),
+    {
+      name: "update_intent",
+      description:
+        "Update an existing intent in place when the user corrects or refines the same goal. Keeps its ID and falseCompletions.",
+      schema: z.object({
+        id: z.string().describe("ID of the intent on the active stack to update."),
+        description: z
+          .string()
+          .optional()
+          .describe("Revised user goal from the human perspective."),
+        kind: intentKindSchema.optional().describe("Revised intent kind, if it changed."),
+        completed_when: z
+          .string()
+          .optional()
+          .describe("One short line: revised condition that means this intent is satisfied."),
+        what_changed: z
+          .string()
+          .describe("One short line: what the user changed about this goal and why."),
       }),
     }
   );
@@ -58,35 +82,6 @@ export function createGovernorPromptTools(
     }),
   });
 
-  const addConstraint = tool(
-    async ({ constraint, target = "global" }) =>
-      dispatch({ type: "add_constraint", constraint, target }),
-    {
-      name: "add_constraint",
-      description: "Add a boundary rule or constraint to a specific intent ID or globally.",
-      schema: z.object({
-        constraint: z.string().describe("The rule or constraint to enforce (e.g. 'only in blue')."),
-        target: z
-          .string()
-          .optional()
-          .describe("Intent ID to attach this constraint to, or 'global' (defaults to 'global')."),
-      }),
-    }
-  );
-
-  const removeConstraint = tool(
-    async ({ constraint, target = "global" }) =>
-      dispatch({ type: "remove_constraint", constraint, target }),
-    {
-      name: "remove_constraint",
-      description: "Remove a constraint from a specific intent or from global constraints.",
-      schema: z.object({
-        constraint: z.string().describe("The constraint text to remove."),
-        target: z.string().optional().describe("Intent ID or 'global'."),
-      }),
-    }
-  );
-
   const finish = tool(
     async ({ reasoning }) => {
       signalFinish(reasoning);
@@ -98,15 +93,19 @@ export function createGovernorPromptTools(
     },
     {
       name: "finish",
-      description:
-        "Call ONLY when the intent stack and constraints accurately reflect the user's intent.",
+      description: "Call ONLY when the intent stack accurately reflects the user's intent.",
       schema: z.object({
         reasoning: z.string().optional().describe("Brief note on why the state is now aligned."),
       }),
     }
   );
 
-  return [pushIntent, popIntent, addConstraint, removeConstraint, finish];
+  return [pushIntent, updateIntent, popIntent, finish];
+}
+
+export interface IntentBlocks {
+  resolve(intentId: string): string | null;
+  approve(): string | null;
 }
 
 /**
@@ -114,20 +113,32 @@ export function createGovernorPromptTools(
  */
 export function createGovernorExitTools(
   dispatch: GovernorDispatch,
+  blocks: IntentBlocks,
   signalFinish: (result: ExitVerdictSignal) => void
 ): StructuredTool[] {
-  const resolveIntent = tool(async ({ id }) => dispatch({ type: "resolve_intent", id }), {
-    name: "resolve_intent",
-    description: "Mark a specific active intent as satisfied and move it to completed history.",
-    schema: z.object({
-      id: z
-        .string()
-        .describe("ID of the intent on the active stack that was satisfied (e.g. 'itnt_...')."),
-    }),
-  });
+  const resolveIntent = tool(
+    async ({ id }) => {
+      const blocked = blocks.resolve(id);
+      return blocked
+        ? { status: "blocked", message: blocked }
+        : dispatch({ type: "resolve_intent", id });
+    },
+    {
+      name: "resolve_intent",
+      description:
+        "Mark a specific active intent as satisfied and move it to completed history. Fails while the intent has an open false completion.",
+      schema: z.object({
+        id: z
+          .string()
+          .describe("ID of the intent on the active stack that was satisfied (e.g. 'itnt_...')."),
+      }),
+    }
+  );
 
   const finish = tool(
     async ({ approved, feedback = "", nextStep }) => {
+      const blocked = approved ? blocks.approve() : null;
+      if (blocked) return { status: "blocked", message: blocked };
       signalFinish({ approved, feedback, nextStep });
       return {
         status: "finished",
@@ -148,9 +159,7 @@ export function createGovernorExitTools(
         feedback: z
           .string()
           .optional()
-          .describe(
-            "Actionable correction feedback to inject into the agent if approved is false."
-          ),
+          .describe("Actionable correction feedback to give yourself if approved is false."),
         nextStep: z
           .string()
           .optional()
@@ -165,37 +174,3 @@ export function createGovernorExitTools(
 }
 
 export type PreToolDecision = { approved: true } | { approved: false; reason: string };
-
-export function createGovernorPreToolTools(
-  signalDecision: (decision: PreToolDecision) => void
-): StructuredTool[] {
-  const allow = tool(
-    async () => {
-      signalDecision({ approved: true });
-      return { status: "allowed" };
-    },
-    {
-      name: "allow",
-      description: "Allow the proposed tool call to execute.",
-      schema: z.object({}),
-    }
-  );
-
-  const deny = tool(
-    async ({ reason }) => {
-      signalDecision({ approved: false, reason });
-      return { status: "denied", reason };
-    },
-    {
-      name: "deny",
-      description: "Block the proposed tool call.",
-      schema: z.object({
-        reason: z
-          .string()
-          .describe("Why this tool call does not move toward satisfying the active intent."),
-      }),
-    }
-  );
-
-  return [allow, deny];
-}

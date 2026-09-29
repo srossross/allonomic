@@ -4,3 +4,4 @@ src-tauri
 package
 bun.lock
 package-lock.json
+.claude/

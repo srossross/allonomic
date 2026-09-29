@@ -1,39 +1,17 @@
 import {
   HumanMessage,
   AIMessage,
+  isAIMessage,
   SystemMessage,
   ToolMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
 import { createLogger } from "../log";
 import type { HistoryEntry } from "../history";
-import type { ToolCallStatus, UserPromptValue } from "../../types/tools";
-import { createRejectedResult, createResponseResult, decodeToolResult } from "../userPrompt";
 import type { CompiledWorkflow } from "./workflow";
+import { thoughtSignatureKwargs } from "./thinking";
 
 const log = createLogger("pipeline/threadState");
-
-export type ApprovedToolInvoker = (name: string, args: Record<string, unknown>) => Promise<string>;
-
-export interface PromptResponseResult {
-  index: number;
-  toolCallId: string;
-  name: string;
-  status: ToolCallStatus;
-  result: string;
-}
-
-function findToolCallArgs(
-  messages: BaseMessage[],
-  toolId: string
-): { name: string; args: Record<string, unknown> } | null {
-  for (const m of messages) {
-    if (!(m instanceof AIMessage)) continue;
-    const match = m.tool_calls?.find((c) => c.id === toolId);
-    if (match) return { name: match.name, args: match.args };
-  }
-  return null;
-}
 
 export async function messageCount(compiled: CompiledWorkflow, threadId: string): Promise<number> {
   const state = await compiled.getState({ configurable: { thread_id: threadId } });
@@ -41,100 +19,42 @@ export async function messageCount(compiled: CompiledWorkflow, threadId: string)
   return Array.isArray(messages) ? messages.length : 0;
 }
 
-export async function respondToPromptResult(
+export async function closeUnansweredToolCalls(
   compiled: CompiledWorkflow,
   threadId: string,
-  toolId: string,
-  value: UserPromptValue,
-  invokeApproved: ApprovedToolInvoker
-): Promise<PromptResponseResult | null> {
+  content: string
+): Promise<ToolMessage[]> {
   const config = { configurable: { thread_id: threadId } };
   const state = await compiled.getState(config);
-  log.info("resumeTool:state", {
-    threadId,
-    toolId,
-    hasState: !!state,
-    messageCount: state?.values?.messages?.length ?? 0,
-    next: state?.next,
-    checkpointId: state?.config?.configurable?.checkpoint_id,
-  });
-  if (!state?.values?.messages) {
-    log.warn("resumeTool:noState", { threadId, toolId });
-    return null;
-  }
-
-  const messages: BaseMessage[] = state.values.messages;
-  const index = messages.findIndex(
-    (m) => m._getType() === "tool" && Reflect.get(m, "tool_call_id") === toolId
+  const messages: BaseMessage[] = state?.values?.messages ?? [];
+  const answered = new Set(
+    messages.filter((m): m is ToolMessage => m instanceof ToolMessage).map((m) => m.tool_call_id)
   );
-  if (index === -1) {
-    log.warn("resumeTool:toolMessageNotFound", {
-      threadId,
-      toolId,
-      toolMessages: messages
-        .filter((m) => m._getType() === "tool")
-        .map((m) => ({ name: m.name, toolCallId: Reflect.get(m, "tool_call_id") })),
-    });
-    return null;
-  }
+  const closers = messages
+    .flatMap((m) => (isAIMessage(m) ? (m.tool_calls ?? []) : []))
+    .filter((c) => c.id && !answered.has(c.id))
+    .map((c) => new ToolMessage({ content, name: c.name, tool_call_id: c.id! }));
+  if (closers.length > 0) await compiled.updateState(config, { messages: closers }, "tools");
+  return closers;
+}
 
-  const oldMessage = messages[index];
-  if (!oldMessage.id) {
-    throw new Error(
-      `Tool message for ${toolId} has no id; updateState would append instead of replace`
-    );
-  }
-
-  const decoded = decodeToolResult(oldMessage.content);
-  if (decoded.status !== "pending") {
-    log.warn("resumeTool:notPending", { threadId, toolId, status: decoded.status });
-    return null;
-  }
-
-  const call = findToolCallArgs(messages, toolId);
-  if (!call) {
-    log.warn("resumeTool:toolCallNotFound", { threadId, toolId });
-    return null;
-  }
-
-  const { prompt } = decoded;
-  let status: ToolCallStatus;
-  let result: string;
-  if (prompt.kind === "confirm") {
-    if (typeof value !== "boolean")
-      throw new Error(`confirm prompt expects a boolean, got ${typeof value}`);
-    if (value) {
-      result = await invokeApproved(call.name, call.args);
-      status = "approved";
-    } else {
-      result = createRejectedResult(call.name, prompt);
-      status = "rejected";
-    }
-  } else {
-    if (typeof value !== "string")
-      throw new Error(`${prompt.kind} prompt expects a string, got ${typeof value}`);
-    result = createResponseResult(prompt, value);
-    status = "executed";
-  }
-
-  const patched = new ToolMessage({
-    content: result,
-    name: oldMessage.name,
-    tool_call_id: toolId,
+export function historyToMessages(history: HistoryEntry[]): BaseMessage[] {
+  return history.map((h) => {
+    const content = h.content ?? "";
+    if (h.role === "user" || h.role === "human") return new HumanMessage(content);
+    if (h.role === "system") return new SystemMessage(content);
+    return h.role === "tool"
+      ? new ToolMessage({
+          content,
+          tool_call_id: h.tool_call_id ?? "unknown",
+          name: h.name ?? "unknown",
+        })
+      : new AIMessage({
+          content,
+          tool_calls: h.tool_calls,
+          additional_kwargs: h.tool_calls ? thoughtSignatureKwargs(h.tool_calls) : {},
+        });
   });
-  patched.id = oldMessage.id;
-
-  await compiled.updateState(config, { messages: [patched] }, "tools");
-  const after = await compiled.getState(config);
-  log.info("resumeTool:updated", {
-    threadId,
-    toolId,
-    index,
-    status,
-    next: after?.next,
-    messageCount: after?.values?.messages?.length ?? 0,
-  });
-  return { index, toolCallId: toolId, name: call.name, status, result };
 }
 
 export async function rehydrateHistory(
@@ -153,18 +73,7 @@ export async function rehydrateHistory(
   }
   log.info("rehydrateHistory:seeding", { threadId, historyLength: history.length });
 
-  const pastMessages = history.map((h) => {
-    const content = h.content ?? "";
-    if (h.role === "user" || h.role === "human") return new HumanMessage(content);
-    if (h.role === "system") return new SystemMessage(content);
-    return h.role === "tool"
-      ? new ToolMessage({
-          content,
-          tool_call_id: h.tool_call_id ?? "unknown",
-          name: h.name ?? "unknown",
-        })
-      : new AIMessage({ content, tool_calls: h.tool_calls });
-  });
+  const pastMessages = historyToMessages(history);
   await compiled.updateState({ configurable: { thread_id: threadId } }, { messages: pastMessages });
   log.info("rehydrateHistory:seeded", {
     threadId,

@@ -14,10 +14,10 @@ export async function loadTurn(
   if (!(await fs.exists(eventsPath)))
     return await loadLegacyTurn(fs, turnDir, turnIndex, previousMessageCount);
   const { events } = turnEventFileSchema.parse(YAML.parse(await fs.readText(eventsPath)));
-  return { events, messageCount: 0 };
+  return { events, messageCount: previousMessageCount };
 }
 
-export async function listTurnNumbers(fs: FileStore, sessionDir: string): Promise<number[]> {
+async function listTurnNumbers(fs: FileStore, sessionDir: string): Promise<number[]> {
   const turnsDir = join(sessionDir, "turns");
   if (!(await fs.exists(turnsDir))) return [];
   const entries = await fs.readDir(turnsDir);

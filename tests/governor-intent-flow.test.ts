@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { createGovernorPromptTools } from "../src/core/governor/tools";
+import { createGovernorFalseCompletionTools } from "../src/core/governor/falseCompletionTools";
 import { localGovernor } from "./helpers/turnContext";
 
 function parse(result: unknown) {
@@ -17,19 +18,19 @@ describe("Governor Intent & State Flow", () => {
       await pushIntent.invoke({
         kind: "question",
         description: "User is asking if we can build a rust CLI",
-        constraints: ["do not edit cargo yet"],
+        completed_when: "User knows whether we can build a rust CLI",
       })
     );
     expect(parsed1.status).toBe("created");
     expect(governor.state().intent_stack.length).toBe(1);
     expect(governor.state().intent_stack[0].kind).toBe("question");
-    expect(governor.state().intent_stack[0].constraints).toContain("do not edit cargo yet");
 
     const parsed2 = parse(
       await pushIntent.invoke({
         id: "itnt_custom_123",
         kind: "request",
         description: "Inspect src/main.rs",
+        completed_when: "src/main.rs has been inspected",
       })
     );
     expect(parsed2.intent.id).toBe("itnt_custom_123");
@@ -40,11 +41,22 @@ describe("Governor Intent & State Flow", () => {
   it("handles pop_intent by ID and by LIFO stack top", async () => {
     const governor = localGovernor({
       intent_stack: [
-        { id: "itnt_1", kind: "request", description: "First task", constraints: [] },
-        { id: "itnt_2", kind: "request", description: "Second task", constraints: [] },
+        {
+          id: "itnt_1",
+          kind: "request",
+          description: "First task",
+          completed_when: null,
+          changelog: [],
+        },
+        {
+          id: "itnt_2",
+          kind: "request",
+          description: "Second task",
+          completed_when: null,
+          changelog: [],
+        },
       ],
       completed_intents: [],
-      global_constraints: [],
     });
     const popIntent = createGovernorPromptTools(governor.dispatch, () => {}).find(
       (t) => t.name === "pop_intent"
@@ -61,31 +73,6 @@ describe("Governor Intent & State Flow", () => {
     expect(parse(await popIntent.invoke({})).status).toBe("empty");
   });
 
-  it("adds and removes global and targeted constraints", async () => {
-    const governor = localGovernor({
-      intent_stack: [
-        { id: "itnt_alpha", kind: "request", description: "Compile", constraints: [] },
-      ],
-      completed_intents: [],
-      global_constraints: [],
-    });
-    const tools = createGovernorPromptTools(governor.dispatch, () => {});
-    const addConstraint = tools.find((t) => t.name === "add_constraint")!;
-    const removeConstraint = tools.find((t) => t.name === "remove_constraint")!;
-
-    await addConstraint.invoke({ constraint: "Never delete .git", target: "global" });
-    expect(governor.state().global_constraints).toContain("Never delete .git");
-
-    await addConstraint.invoke({ constraint: "Use --release flag", target: "itnt_alpha" });
-    expect(governor.state().intent_stack[0].constraints).toContain("Use --release flag");
-
-    await removeConstraint.invoke({ constraint: "Never delete .git", target: "global" });
-    expect(governor.state().global_constraints).not.toContain("Never delete .git");
-
-    await removeConstraint.invoke({ constraint: "Use --release flag", target: "itnt_alpha" });
-    expect(governor.state().intent_stack[0].constraints).not.toContain("Use --release flag");
-  });
-
   it("signals finish with reasoning to transition out of entry interceptor", async () => {
     let reasoning: string | undefined;
     let isFinished = false;
@@ -97,5 +84,198 @@ describe("Governor Intent & State Flow", () => {
     await finish.invoke({ reasoning: "User intent captured and aligned." });
     expect(isFinished).toBe(true);
     expect(reasoning).toBe("User intent captured and aligned.");
+  });
+
+  it("update_intent revises an intent in place", async () => {
+    const governor = localGovernor();
+    const tools = createGovernorPromptTools(governor.dispatch, () => {});
+    await tools
+      .find((t) => t.name === "push_intent")!
+      .invoke({
+        id: "itnt_a",
+        kind: "request",
+        description: "Add a red box",
+        completed_when: "A red box is on the page",
+      });
+    const parsed = parse(
+      await tools
+        .find((t) => t.name === "update_intent")!
+        .invoke({
+          id: "itnt_a",
+          description: "Add a blue box",
+          completed_when: "A blue box is on the page",
+          what_changed: "User wants blue instead of red",
+        })
+    );
+    expect(parsed.status).toBe("updated");
+    expect(governor.state().intent_stack).toEqual([
+      {
+        id: "itnt_a",
+        kind: "request",
+        description: "Add a blue box",
+        completed_when: "A blue box is on the page",
+        changelog: ["User wants blue instead of red"],
+      },
+    ]);
+  });
+
+  it("falseCompletion tools add, resolve and finish", async () => {
+    const governor = localGovernor();
+    await createGovernorPromptTools(governor.dispatch, () => {})
+      .find((t) => t.name === "push_intent")!
+      .invoke({
+        id: "itnt_a",
+        kind: "request",
+        description: "Add an image box",
+        completed_when: "An image box is on the page",
+      });
+
+    let reasoning: string | undefined;
+    const tools = createGovernorFalseCompletionTools(
+      governor.dispatch,
+      governor.state,
+      (r) => {
+        reasoning = r;
+      },
+      () => {}
+    );
+    const addFalseCompletion = tools.find((t) => t.name === "add_false_completion")!;
+    const resolveFalseCompletion = tools.find((t) => t.name === "resolve_false_completion")!;
+    const noFalseCompletions = tools.find((t) => t.name === "no_false_completions")!;
+    const finish = tools.find((t) => t.name === "finish")!;
+
+    const added = parse(
+      await addFalseCompletion.invoke({
+        intent_id: "itnt_a",
+        summary: "Image styled with ad hoc CSS",
+        relies_on: "Inline styles are acceptable in this project",
+        completes_as: "Agent adds the image with inline styles and reports done",
+        false_because: "User expected the existing reusable box style",
+        directive: "Use the existing reusable box style",
+      })
+    );
+    expect(added.status).toBe("created");
+    const [created] = governor.state().false_completions;
+    expect(created).toMatchObject({
+      id: added.id,
+      intent_id: "itnt_a",
+      evidence: null,
+      resolution: null,
+      resolution_reason: null,
+    });
+    expect(created.id).toStartWith("fcomp_");
+
+    const resolved = parse(
+      await resolveFalseCompletion.invoke({
+        id: added.id,
+        resolution: "invalid",
+        reason: "Raised in error",
+      })
+    );
+    expect(resolved.status).toBe("resolved");
+    expect(governor.state().false_completions[0].resolution).toBe("invalid");
+
+    const second = parse(
+      await addFalseCompletion.invoke({
+        intent_id: "itnt_a",
+        summary: "Box size guessed",
+        relies_on: "Default size is fine",
+        completes_as: "Image added at default size",
+        false_because: "User wanted it to match the grid",
+        directive: "Size the image to match the grid",
+      })
+    );
+    const evidence = { source: "styles.css", quote: ".box { width: 100% }" };
+    const missingAssumed = parse(
+      await resolveFalseCompletion.invoke({
+        id: second.id,
+        reason: "styles checked",
+        resolution: "ruled_out",
+        evidence,
+      })
+    );
+    expect(missingAssumed.status).toBe("error");
+    expect(governor.state().false_completions[1].resolution).toBeNull();
+
+    const ruledOut = parse(
+      await resolveFalseCompletion.invoke({
+        id: second.id,
+        reason: "styles checked",
+        resolution: "ruled_out",
+        evidence,
+        still_assumed: "the grid uses .box",
+      })
+    );
+    expect(ruledOut.status).toBe("resolved");
+    expect(governor.state().false_completions[1].still_assumed).toBe("the grid uses .box");
+
+    expect(
+      parse(await noFalseCompletions.invoke({ intent_id: "itnt_a", reason: "settled" })).status
+    ).toBe("acknowledged");
+    await finish.invoke({ reasoning: "False completions recorded." });
+    expect(reasoning).toBe("False completions recorded.");
+  });
+
+  it("finish fails until every active intent has an open false completion or no_false_completions", async () => {
+    const governor = localGovernor();
+    const pushIntent = createGovernorPromptTools(governor.dispatch, () => {}).find(
+      (t) => t.name === "push_intent"
+    )!;
+    await pushIntent.invoke({
+      id: "itnt_a",
+      kind: "request",
+      description: "Verify comments",
+      completed_when: "Each comment has a verdict",
+    });
+    await pushIntent.invoke({
+      id: "itnt_b",
+      kind: "question",
+      description: "Ask about CI",
+      completed_when: "User knows about CI",
+    });
+
+    let isFinished = false;
+    const rejections: string[] = [];
+    const tools = createGovernorFalseCompletionTools(
+      governor.dispatch,
+      governor.state,
+      () => {
+        isFinished = true;
+      },
+      (message) => {
+        rejections.push(message);
+      }
+    );
+    const addFalseCompletion = tools.find((t) => t.name === "add_false_completion")!;
+    const noFalseCompletions = tools.find((t) => t.name === "no_false_completions")!;
+    const finish = tools.find((t) => t.name === "finish")!;
+
+    const first = parse(await finish.invoke({}));
+    expect(first.status).toBe("error");
+    expect(first.message).toContain("itnt_a");
+    expect(first.message).toContain("itnt_b");
+    expect(isFinished).toBe(false);
+    expect(rejections).toEqual([first.message]);
+
+    await addFalseCompletion.invoke({
+      intent_id: "itnt_a",
+      summary: "Verified against the wrong code",
+      relies_on: "The local checkout is the PR head commit Copilot reviewed",
+      completes_as: "Agent verifies each comment against the local checkout and reports verdicts",
+      false_because: "Local checkout may not be the PR head commit Copilot reviewed",
+      detect_by: "git rev-parse HEAD vs gh pr view --json headRefOid",
+      directive: "Check out the PR head commit before verifying comments",
+    });
+    const second = parse(await finish.invoke({}));
+    expect(second.status).toBe("error");
+    expect(second.message).not.toContain("itnt_a");
+    expect(second.message).toContain("itnt_b");
+
+    expect(
+      parse(await noFalseCompletions.invoke({ intent_id: "missing", reason: "settled" })).status
+    ).toBe("not_found");
+    await noFalseCompletions.invoke({ intent_id: "itnt_b", reason: "settled" });
+    expect(parse(await finish.invoke({})).status).toBe("finished");
+    expect(isFinished).toBe(true);
   });
 });

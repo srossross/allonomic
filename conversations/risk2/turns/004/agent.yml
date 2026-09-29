@@ -1,0 +1,21 @@
+final_response: "Waiting for user: gh api repos/n6k-io/duckdb-virtual-catalog/pulls/4/comments"
+messages:
+  - type: ai
+    content:
+      - type: functionCall
+        functionCall:
+          name: run_native_read_only_command
+          args: &a1
+            command: gh api repos/n6k-io/duckdb-virtual-catalog/pulls/4/comments
+          id: call_2173611
+    tool_calls:
+      - type: tool_call
+        id: call_2173611
+        name: run_native_read_only_command
+        args: *a1
+  - type: tool
+    name: run_native_read_only_command
+    content: '{"pending":true,"v":1,"prompt":{"kind":"confirm","label":"gh api
+      repos/n6k-io/duckdb-virtual-catalog/pulls/4/comments"}}'
+    tool_call_id: call_2173611
+timestamp: 2026-09-27T05:03:37.411Z

@@ -7,6 +7,8 @@ export interface Message {
   thinking?: string;
   thinkingDurationSeconds?: number;
   toolCalls?: ToolCallInfo[];
+  isError?: boolean;
+  brief?: { interceptor: string; text: string; doneWhen: string[] };
 }
 
 export interface ContextMessage {
@@ -20,22 +22,41 @@ export interface ContextMessage {
 export interface ModelOption {
   id: string;
   label: string;
-  hasThinking: boolean;
+  thinking: ThinkingLevel[];
+  inputTokenLimit: number;
 }
 
 export const DEFAULT_MODEL_ID = "gemini-3.8-flash";
 
-export const AVAILABLE_MODELS: ModelOption[] = [
-  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", hasThinking: true },
-  { id: "gemini-3.8-pro", label: "Gemini 3.8 Pro", hasThinking: true },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hasThinking: true },
-  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hasThinking: true },
-  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hasThinking: true },
-];
+export const THINKING_LEVELS = ["Off", "Low", "Medium", "High"] as const;
 
-export type ThinkingLevel = "Off" | "Low" | "Medium" | "High";
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-export type ExecutionMode = "manual" | "accept edits";
+export type ExecutionMode = "restricted" | "read" | "write" | "god";
+
+export type AccessLevel = 1 | 2 | 3 | 4;
+
+export const EXECUTION_MODE_LEVELS: Record<ExecutionMode, AccessLevel> = {
+  restricted: 1,
+  read: 2,
+  write: 3,
+  god: 4,
+};
+
+export const LEVEL_MODES: Record<AccessLevel, ExecutionMode> = {
+  1: "restricted",
+  2: "read",
+  3: "write",
+  4: "god",
+};
+
+export const DEFAULT_EXECUTION_MODE: ExecutionMode = "restricted";
+
+export const GOVERNOR_MODES = ["off", "no-false-completion", "full"] as const;
+
+export type GovernorMode = (typeof GOVERNOR_MODES)[number];
+
+export const DEFAULT_GOVERNOR_MODE: GovernorMode = "full";
 
 export interface ModeOption {
   id: ExecutionMode;
@@ -44,6 +65,8 @@ export interface ModeOption {
 }
 
 export const AVAILABLE_MODES: ModeOption[] = [
-  { id: "manual", label: "Manual", description: "Prompt for approvals" },
-  { id: "accept edits", label: "Accept edits", description: "Auto-apply code edits" },
+  { id: "restricted", label: "restricted", description: "Prompt for anything above level 1" },
+  { id: "read", label: "read", description: "Prompt for anything above level 2" },
+  { id: "write", label: "write", description: "Prompt for anything above level 3" },
+  { id: "god", label: "god", description: "Never prompt" },
 ];

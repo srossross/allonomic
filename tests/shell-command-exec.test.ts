@@ -1,147 +1,132 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect } from "bun:test";
 import { createMemoryRuntime, ScriptedShell } from "../src/adapters/memory/runtime";
+import type { ShellResult } from "../src/core/ports";
 import { createAgentTools } from "../src/core/tools";
-import { clearDevContainerCache } from "../src/core/devcontainer";
-
-const PS_ROW = "cid123\trunning\n";
-const MOUNTS = "/a/b/c\t/workspaces/c\n/var/lib/docker/volumes/x/_data\t/var/lib/docker\n";
+import { seatbeltProfile } from "../src/core/tools/shell";
+import { parseShellResult } from "../src/core/tools/shellResult";
 
 function shellTools(
-  mode: "manual" | "accept edits",
-  isApproved?: boolean,
-  workspaceDir = "/a/b/c"
+  options: {
+    hasNetwork?: boolean;
+    platform?: string;
+    handler?: () => ShellResult;
+  } = {}
 ) {
-  const runtime = createMemoryRuntime();
-  runtime.fs.dirs.add("/a/b/c/.devcontainer");
-  const shell = new ScriptedShell((program, args) => {
-    if (args[0] === "ps") return { code: 0, stdout: PS_ROW, stderr: "" };
-    return { code: 0, stdout: args[0] === "inspect" ? MOUNTS : "", stderr: "" };
-  });
-  runtime.shell = shell;
-  const tools = createAgentTools(runtime, workspaceDir, mode, { approved: isApproved });
+  const runtime = createMemoryRuntime({ platform: options.platform });
+  runtime.shell = new ScriptedShell(options.handler);
+  if (options.hasNetwork) runtime.fs.files.set("/appconfig/config.yml", "network_access: true\n");
+  const tools = createAgentTools(runtime, "/w", "god");
+  const byName = (name: string) => tools.find((t) => t.name === name)!;
   return {
-    shell,
-    readOnly: tools.find((t) => t.name === "run_read_only_command")!,
-    mutate: tools.find((t) => t.name === "run_mutating_command")!,
+    shell: runtime.shell,
+    level1: byName("shell_1_project_read_only"),
+    level2: byName("shell_2_read_only"),
+    level3: byName("shell_3_project_write"),
+    level4: byName("shell_4_full_access"),
   };
 }
 
-const execCalls = (shell: ScriptedShell) => shell.calls.filter((c) => c.args[0] === "exec");
+function params(args: string[], prefix: string) {
+  return args
+    .filter((a, index) => args[index - 1] === "-D" && a.startsWith(`${prefix}_`))
+    .map((a) => a.slice(a.indexOf("=") + 1));
+}
 
-describe("shell command execution", () => {
-  beforeEach(() => clearDevContainerCache());
-
-  it("mutating passes the raw command to sh -c with the container mount as workdir", async () => {
-    const { shell, mutate } = shellTools("accept edits", true);
-    await mutate.invoke({ command: "go mod tidy" });
-    expect(execCalls(shell)[0].args).toEqual([
-      "exec",
-      "-w",
-      "/workspaces/c",
-      "cid123",
-      "sh",
-      "-c",
-      "go mod tidy",
-    ]);
+describe("sandboxed shell execution", () => {
+  it("runs sandbox-exec with paths passed as params, never inlined", async () => {
+    const { shell, level2 } = shellTools();
+    await level2.invoke({ command: "ls -la" });
+    const { program, args } = shell.calls[0];
+    expect(program).toBe("sandbox-exec");
+    expect(args[0]).toBe("-p");
+    expect(args[1]).not.toContain("/home/test");
+    expect(args[1]).not.toContain("/w");
+    const [tmp] = params(args, "WRITE");
+    expect(tmp).toMatch(/^\/private\/tmp\/at-sandbox\/[0-9a-f]{8}$/);
+    expect(args.slice(-3)).toEqual(["/w", tmp, "ls -la"]);
   });
 
-  it("read-only wraps in bwrap, binds the container workdir read-only, and runs there", async () => {
-    const { shell, readOnly } = shellTools("accept edits", true);
-    await readOnly.invoke({ command: "ls -la" });
-    expect(execCalls(shell)[0].args).toEqual([
-      "exec",
-      "-w",
-      "/workspaces/c",
-      "cid123",
-      "bwrap",
-      "--bind",
-      "/",
-      "/",
-      "--dev-bind",
+  it("level 1 reads only the project, $TMP and system dirs, and writes only $TMP", async () => {
+    const { shell, level1 } = shellTools();
+    await level1.invoke({ command: "ls" });
+    const { args } = shell.calls[0];
+    const [tmp] = params(args, "WRITE");
+    expect(params(args, "READ")).toEqual([
+      "/w",
+      tmp,
+      "/bin",
+      "/usr",
+      "/System",
+      "/Library",
       "/dev",
-      "/dev",
-      "--ro-bind",
-      "/workspaces/c",
-      "/workspaces/c",
-      "sh",
-      "-c",
-      "ls -la",
     ]);
+    expect(params(args, "WRITE")).toEqual([tmp]);
+    expect(params(args, "DENY")).toEqual(["/w/.allonomic"]);
   });
 
-  it("maps a workspace below the devcontainer root onto the mount", async () => {
-    const { shell, mutate } = shellTools("accept edits", true, "/a/b/c/sub/dir");
-    await mutate.invoke({ command: "pwd" });
-    expect(execCalls(shell)[0].args.slice(0, 3)).toEqual(["exec", "-w", "/workspaces/c/sub/dir"]);
+  it("level 2 adds root reads and cache writes on top of level 1", async () => {
+    const { shell, level2 } = shellTools();
+    await level2.invoke({ command: "ls" });
+    const { args } = shell.calls[0];
+    expect(params(args, "READ")).toContain("/");
+    expect(params(args, "READ")).toContain("/w");
+    expect(params(args, "WRITE")).toContain("/home/test/.npm");
+    expect(params(args, "WRITE")).not.toContain("/w");
   });
 
-  it("caches the container lookup across commands", async () => {
-    const { shell, mutate } = shellTools("accept edits", true);
-    await mutate.invoke({ command: "a" });
-    await mutate.invoke({ command: "b" });
-    expect(shell.calls.filter((c) => c.args[0] === "ps")).toHaveLength(1);
-    expect(shell.calls.filter((c) => c.args[0] === "inspect")).toHaveLength(1);
-    expect(execCalls(shell)).toHaveLength(2);
+  it("level 3 adds project writes", async () => {
+    const { shell, level3 } = shellTools();
+    await level3.invoke({ command: "ls" });
+    expect(params(shell.calls[0].args, "WRITE")).toContain("/w");
   });
 
-  it("re-resolves and retries once when the cached container is gone", async () => {
-    const runtime = createMemoryRuntime();
-    runtime.fs.dirs.add("/a/b/c/.devcontainer");
-    let psCalls = 0;
-    const shell = new ScriptedShell((_, args) => {
-      if (args[0] === "ps") return { code: 0, stdout: `cid${++psCalls}\trunning\n`, stderr: "" };
-      if (args[0] === "inspect") return { code: 0, stdout: MOUNTS, stderr: "" };
-      return args[0] === "exec" && args[3] === "cid1"
-        ? { code: 1, stdout: "", stderr: "Error response from daemon: No such container: cid1" }
-        : { code: 0, stdout: "ok", stderr: "" };
+  it("denies read and write of deny paths after the allows", () => {
+    const profile = seatbeltProfile({ read: ["/"], write: ["/w"], deny: ["/w/.allonomic"] }, true);
+    const allowWrite = profile.indexOf("(allow file-write*");
+    const deny = profile.indexOf(`(deny file-read-data file-write* (subpath (param "DENY_0")))`);
+    expect(deny).toBeGreaterThan(allowWrite);
+  });
+
+  it("denies remote network only when network is off", async () => {
+    const rules = { read: [], write: [], deny: [] };
+    expect(seatbeltProfile(rules, false)).toContain("(deny network-outbound (remote ip))");
+    expect(seatbeltProfile(rules, true)).not.toContain("network");
+    const { shell, level1 } = shellTools({ hasNetwork: true });
+    await level1.invoke({ command: "curl example.com" });
+    expect(shell.calls[0].args[1]).not.toContain("network");
+  });
+
+  it("level 4 runs an unsandboxed sh in the workdir", async () => {
+    const { shell, level4 } = shellTools();
+    await level4.invoke({ command: "make" });
+    expect(shell.calls[0]).toEqual({
+      program: "sh",
+      args: ["-c", 'cd "$0" && exec /bin/sh -c "$1"', "/w", "make"],
     });
-    runtime.shell = shell;
-    const mutate = createAgentTools(runtime, "/a/b/c", "accept edits", { approved: true }).find(
-      (t) => t.name === "run_mutating_command"
-    )!;
-    const result = await mutate.invoke({ command: "x" });
-    expect(result).toBe("ok");
-    expect(execCalls(shell).map((c) => c.args[3])).toEqual(["cid1", "cid2"]);
   });
 
-  it("creates a fallback container and runs at the host path when no devcontainer exists", async () => {
-    const runtime = createMemoryRuntime();
-    let isCreated = false;
-    const shell = new ScriptedShell((_, args) => {
-      if (args[0] === "ps")
-        return { code: 0, stdout: isCreated ? "fb1\trunning\n" : "", stderr: "" };
-      if (args[0] === "run") {
-        isCreated = true;
-        return { code: 0, stdout: "fb1\n", stderr: "" };
-      }
-      return { code: 0, stdout: args[0] === "inspect" ? "/a/b/c\t/a/b/c\n" : "ok", stderr: "" };
+  it("errors on platforms without a sandbox implementation", async () => {
+    const { shell, level1 } = shellTools({ platform: "linux" });
+    expect(await level1.invoke({ command: "ls" })).toContain("not implemented on linux");
+    expect(shell.calls).toHaveLength(0);
+  });
+
+  it("reports a non-zero exit code with the output", async () => {
+    const { level2 } = shellTools({
+      handler: () => ({ code: 2, stdout: "", stderr: "boom" }),
     });
-    runtime.shell = shell;
-    const mutate = createAgentTools(runtime, "/a/b/c", "accept edits", { approved: true }).find(
-      (t) => t.name === "run_mutating_command"
-    )!;
-    expect(await mutate.invoke({ command: "x" })).toBe("ok");
-    expect(execCalls(shell).at(-1)!.args).toEqual(["exec", "-w", "/a/b/c", "fb1", "sh", "-c", "x"]);
+    const parsed = parseShellResult(await level2.invoke({ command: "x" }));
+    expect(parsed).toMatchObject({ output: "[STDERR]:\nboom", exitCode: 2 });
   });
 
-  it("refuses when a devcontainer is configured but not created", async () => {
-    const runtime = createMemoryRuntime();
-    runtime.fs.dirs.add("/a/b/c/.devcontainer");
-    runtime.fs.files.set("/a/b/c/.devcontainer/devcontainer.json", "{}");
-    const shell = new ScriptedShell(() => ({ code: 0, stdout: "", stderr: "" }));
-    runtime.shell = shell;
-    const mutate = createAgentTools(runtime, "/a/b/c", "accept edits", { approved: true }).find(
-      (t) => t.name === "run_mutating_command"
-    )!;
-    const result = await mutate.invoke({ command: "x" });
-    expect(result).toContain("devcontainer up");
-    expect(execCalls(shell)).toHaveLength(0);
-  });
-
-  it("manual mode returns a pending confirm without executing", async () => {
-    const { shell, mutate } = shellTools("manual");
-    const result = await mutate.invoke({ command: "go mod tidy" });
-    expect(JSON.parse(result).pending).toBe(true);
-    expect(execCalls(shell)).toHaveLength(0);
+  it("reads the exit code when an interceptor lesson follows the footer", () => {
+    const parsed = parseShellResult(
+      "[STDERR]:\nboom\n[exit 1 in 3ms]\n\n[ToolTeacher]: request [exit 0 in 1ms] access"
+    );
+    expect(parsed).toEqual({
+      output: "[STDERR]:\nboom\n\n[ToolTeacher]: request [exit 0 in 1ms] access",
+      exitCode: 1,
+      durationMs: 3,
+    });
   });
 });

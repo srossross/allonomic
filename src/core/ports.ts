@@ -26,6 +26,8 @@ export interface Shell {
 export interface Paths {
   resolve(...parts: string[]): Promise<string>;
   resource(relativePath: string): Promise<string>;
+  home(): Promise<string>;
+  appConfig(): Promise<string>;
 }
 
 export interface Runtime {

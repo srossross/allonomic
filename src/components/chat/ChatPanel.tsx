@@ -4,13 +4,16 @@ import {
   type ContextMessage,
   type ThinkingLevel,
   type ExecutionMode,
+  type GovernorMode,
   type ModelOption,
-  type UserPrompt,
   type UserPromptValue,
   DEFAULT_MODEL_ID,
+  DEFAULT_EXECUTION_MODE,
+  DEFAULT_GOVERNOR_MODE,
 } from "@/types";
 import { ContextView } from "./ContextView";
 import { ChatMessageItem } from "./ChatMessageItem";
+import { groupExploreRuns } from "./exploreGroups";
 import { ChatComposer, type PendingPrompt } from "./ChatComposer";
 
 // Re-export types for backward compatibility
@@ -21,22 +24,25 @@ export interface ChatPanelProps {
   showContext?: boolean;
   onToggleContext?: () => void;
   loading?: boolean;
+  waitingOn?: string;
   onSendMessage: (text: string) => void;
   onStopMessage?: () => void;
   selectedModel?: string;
   onSelectModel?: (model: string) => void;
   models?: ModelOption[];
+  contextTokens?: number;
   thinkingLevel?: ThinkingLevel;
   onSelectThinkingLevel?: (level: ThinkingLevel) => void;
   executionMode?: ExecutionMode;
   onSelectExecutionMode?: (mode: ExecutionMode) => void;
   onCycleExecutionMode?: () => void;
-  onRespondToPrompt?: (
-    messageId: string,
-    toolId: string,
-    prompt: UserPrompt,
-    value: UserPromptValue
-  ) => void;
+  hasNetworkAccess?: boolean;
+  onToggleHasNetworkAccess?: () => void;
+  governorMode?: GovernorMode;
+  onCycleGovernorMode?: () => void;
+  isTeacherEnabled?: boolean;
+  onToggleTeacher?: () => void;
+  onRespondToPrompt?: (promptId: string, value: UserPromptValue) => void;
 }
 
 export function ChatPanel({
@@ -45,16 +51,24 @@ export function ChatPanel({
   showContext = false,
   onToggleContext: _onToggleContext,
   loading = false,
+  waitingOn,
   onSendMessage,
   onStopMessage,
   selectedModel = DEFAULT_MODEL_ID,
   onSelectModel,
   models,
+  contextTokens,
   thinkingLevel = "Low",
   onSelectThinkingLevel,
-  executionMode = "manual",
+  executionMode = DEFAULT_EXECUTION_MODE,
   onSelectExecutionMode,
   onCycleExecutionMode,
+  hasNetworkAccess = false,
+  onToggleHasNetworkAccess,
+  governorMode = DEFAULT_GOVERNOR_MODE,
+  onCycleGovernorMode,
+  isTeacherEnabled = true,
+  onToggleTeacher,
   onRespondToPrompt,
 }: ChatPanelProps) {
   const [expandedThoughtIds, setExpandedThoughtIds] = useState<Set<string>>(new Set());
@@ -92,9 +106,15 @@ export function ChatPanel({
       if (msg.role !== "assistant" || !msg.toolCalls) continue;
       for (let tcIndex = msg.toolCalls.length - 1; tcIndex >= 0; tcIndex--) {
         const tc = msg.toolCalls[tcIndex];
-        if (tc.status !== "pending" || !tc.prompt) continue;
+        if (tc.status !== "pending" || !tc.prompt || !tc.promptId) continue;
         const toolId = tc.id || `${msg.id}-tc-${tcIndex}`;
-        return { messageId: msg.id, toolId, toolName: tc.name, prompt: tc.prompt };
+        return {
+          messageId: msg.id,
+          toolId,
+          toolName: tc.name,
+          prompt: tc.prompt,
+          promptId: tc.promptId,
+        };
       }
     }
     return null;
@@ -110,10 +130,11 @@ export function ChatPanel({
             No messages yet. Send a prompt to run the governed agent loop.
           </div>
         ) : (
-          messages.map((message) => (
+          groupExploreRuns(messages).map(({ message, toolItems }) => (
             <ChatMessageItem
               key={message.id}
               message={message}
+              toolItems={toolItems}
               isThoughtExpanded={expandedThoughtIds.has(message.id)}
               onToggleThought={() => toggleThought(message.id)}
               expandedToolIds={expandedToolIds}
@@ -122,11 +143,11 @@ export function ChatPanel({
           ))
         )}
 
-        {loading && (
+        {loading && !pendingPrompt && (
           <div className="flex justify-start">
             <div className="border-border/40 bg-muted/40 text-muted-foreground flex items-center gap-2 rounded-xs border px-2.5 py-1.5 font-mono text-xs">
               <span className="bg-primary size-2 animate-ping rounded-full" />
-              <span>Thinking & evaluating workspace...</span>
+              <span>{waitingOn ?? "Starting…"}</span>
             </div>
           </div>
         )}
@@ -139,33 +160,23 @@ export function ChatPanel({
         selectedModel={selectedModel}
         onSelectModel={onSelectModel}
         models={models}
+        contextTokens={contextTokens}
         thinkingLevel={thinkingLevel}
         onSelectThinkingLevel={onSelectThinkingLevel}
         executionMode={executionMode}
         onSelectExecutionMode={onSelectExecutionMode}
         onCycleExecutionMode={onCycleExecutionMode}
+        hasNetworkAccess={hasNetworkAccess}
+        onToggleHasNetworkAccess={onToggleHasNetworkAccess}
+        governorMode={governorMode}
+        onCycleGovernorMode={onCycleGovernorMode}
+        isTeacherEnabled={isTeacherEnabled}
+        onToggleTeacher={onToggleTeacher}
         pendingPrompt={pendingPrompt}
         onRespondToPrompt={(value) =>
-          pendingPrompt &&
-          onRespondToPrompt?.(
-            pendingPrompt.messageId,
-            pendingPrompt.toolId,
-            pendingPrompt.prompt,
-            value
-          )
+          pendingPrompt && onRespondToPrompt?.(pendingPrompt.promptId, value)
         }
       />
     </div>
   );
 }
-
-export {
-  type ModelOption,
-  type ToolCallInfo,
-  AVAILABLE_MODELS,
-  type Message,
-  type ContextMessage,
-  type ThinkingLevel,
-  type ExecutionMode,
-  AVAILABLE_MODES,
-} from "@/types";

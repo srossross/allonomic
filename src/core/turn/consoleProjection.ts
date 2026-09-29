@@ -24,11 +24,17 @@ function actionSummary(action: GovernorAction): string {
     case "push_intent": {
       return `push_intent: (${action.intent.kind}) "${action.intent.description}"`;
     }
-    case "add_constraint": {
-      return `add_constraint: constraint "${action.constraint}" (${action.target})`;
+    case "update_intent": {
+      return `update_intent: '${action.id}'${action.kind ? ` (${action.kind})` : ""}${action.description ? ` "${action.description}"` : ""}`;
     }
-    case "remove_constraint": {
-      return `remove_constraint: constraint "${action.constraint}" (${action.target})`;
+    case "add_false_completion": {
+      return `add_false_completion: "${action.falseCompletion.summary}" → '${action.falseCompletion.intent_id}'`;
+    }
+    case "no_false_completions": {
+      return `no_false_completions: '${action.intent_id}' — ${action.reason}`;
+    }
+    case "resolve_false_completion": {
+      return `resolve_false_completion: '${action.id}' ${action.resolution}${action.reason ? ` — ${action.reason}` : ""}`;
     }
     case "pop_intent": {
       return `pop_intent: ${action.id ?? "top"}`;
@@ -75,7 +81,9 @@ function rows(event: TurnEvent): Row[] {
     case "governor_verdict": {
       const summary =
         event.phase === "entry"
-          ? `finish${event.reasoning ? `: ${event.reasoning}` : ""}`
+          ? event.approved
+            ? `finish${event.reasoning ? `: ${event.reasoning}` : ""}`
+            : `finish rejected: ${event.feedback ?? ""}`
           : `finish: approved: ${event.approved}${event.feedback ? ` (feedback: "${event.feedback}")` : ""}`;
       return [
         {
@@ -86,6 +94,36 @@ function rows(event: TurnEvent): Row[] {
           details: event,
         },
       ];
+    }
+    case "governor_brief": {
+      return [
+        {
+          type: "governor_entry",
+          badge: gov(event.interceptor),
+          badgeVariant: "purple",
+          summary: `brief: ${event.doneWhen.join("; ") || event.text.slice(0, 120)}`,
+          details: event,
+        },
+      ];
+    }
+    case "governor_fork": {
+      return event.messages.flatMap((message): Row[] =>
+        message.role === "ai" && message.thinking
+          ? [
+              {
+                type: "governor_thought",
+                badge: gov(event.interceptor),
+                badgeVariant: "purple",
+                summary: `${event.pass} thinking (${lineCount(message.thinking)} lines): ${message.thinking.slice(0, 80).replaceAll("\n", " ")}...`,
+                details: {
+                  pass: event.pass,
+                  thinking: message.thinking,
+                  toolCalls: message.toolCalls,
+                },
+              },
+            ]
+          : []
+      );
     }
     case "governor_inspect": {
       return [
@@ -152,6 +190,43 @@ function rows(event: TurnEvent): Row[] {
           details: event,
         },
       ];
+    }
+    case "prompt_requested": {
+      return [
+        {
+          type: "action",
+          badge: "ASK",
+          badgeVariant: "amber",
+          summary: `Waiting for user: ${event.prompt.label}`,
+          details: event,
+        },
+      ];
+    }
+    case "prompt_answered": {
+      const isRejected = event.value === false;
+      return [
+        {
+          type: isRejected ? "warning" : "action",
+          badge: isRejected ? "REJECTED" : "ANSWERED",
+          badgeVariant: isRejected ? "destructive" : "emerald",
+          summary: `User answered: ${String(event.value)}`,
+          details: event,
+        },
+      ];
+    }
+    case "context_files_loaded": {
+      return event.files
+        .filter((file) => file.missing)
+        .map((file) => ({
+          type: "warning",
+          badge: "MISSING",
+          badgeVariant: "destructive",
+          summary: `${event.agent} ${event.hook}: ${file.path}`,
+          details: event,
+        }));
+    }
+    case "waiting": {
+      return [];
     }
     case "exit_retry": {
       return [

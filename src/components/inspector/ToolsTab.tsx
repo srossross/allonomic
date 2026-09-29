@@ -19,10 +19,10 @@ export function ToolsTab({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1 text-xs">
-        <span className="text-muted-foreground font-mono text-[10px] font-semibold tracking-wider uppercase">
+        <span className="text-muted-foreground text-2xs font-mono font-semibold tracking-wider uppercase">
           Agent Tools ({activeEnabledTools.length}/{AVAILABLE_TOOLS.length} active)
         </span>
-        <div className="flex items-center gap-2 font-mono text-[10px]">
+        <div className="text-2xs flex items-center gap-2 font-mono">
           <button
             type="button"
             onClick={() => onSetAllTools(true)}

@@ -17,15 +17,15 @@ import {
   type BaseMessageLike,
 } from "@langchain/core/messages";
 import { nanoid } from "nanoid";
-import { invokeWithRetry } from "../retry";
-import { extractThinking, messageText, sanitizeMessagesForModel } from "./thinking";
+import { invokeWaiting, TOOL_SOURCE, WORKER_SOURCE } from "../turn/waiting";
 import {
-  readPipelineContext,
-  type AgentInterceptor,
-  type PipelineContext,
-  type ToolCall,
-} from "./types";
-import { isPendingToolResult } from "../userPrompt";
+  extractThinking,
+  messageText,
+  sanitizeMessagesForModel,
+  thoughtSignatureFor,
+} from "./thinking";
+import { readPipelineContext, type AgentInterceptor } from "./types";
+import { preToolDenial, toolContent, withPostToolLessons } from "./interceptorHooks";
 
 type State = typeof MessagesAnnotation.State;
 
@@ -33,8 +33,8 @@ export interface WorkflowModel {
   invoke(messages: BaseMessageLike[]): Promise<AIMessage | AIMessageChunk>;
 }
 
-function toolContent(message: ToolMessage): string {
-  return typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+export function workerConversation(systemPrompt: string, messages: BaseMessage[]): BaseMessage[] {
+  return [new SystemMessage(systemPrompt), ...sanitizeMessagesForModel(messages)];
 }
 
 function afterAgentCondition(state: State) {
@@ -51,11 +51,6 @@ function afterExitCondition(state: State) {
   return lastMessage && lastMessage._getType() === "human" ? "agent" : "__end__";
 }
 
-function afterToolsCondition(state: State) {
-  const lastMessage = state.messages.at(-1);
-  return lastMessage && isPendingToolResult(lastMessage.content) ? "__end__" : "agent";
-}
-
 export function createCompiledWorkflow(
   model: WorkflowModel,
   toolNode: ToolNode,
@@ -63,32 +58,41 @@ export function createCompiledWorkflow(
   interceptors: AgentInterceptor[],
   systemPrompt: string
 ) {
-  const systemMessage = new SystemMessage(systemPrompt);
-  const modelInput = (state: State): BaseMessage[] => [
-    systemMessage,
-    ...sanitizeMessagesForModel(state.messages),
-  ];
+  const modelInput = (state: State): BaseMessage[] =>
+    workerConversation(systemPrompt, state.messages);
 
   const entryInterceptorsNode = async (state: State, config: LangGraphRunnableConfig) => {
     const context = readPipelineContext(config);
     const lastMessage = state.messages.at(-1);
     if (!lastMessage || lastMessage._getType() !== "human") return {};
 
+    const briefs: string[] = [];
     for (const interceptor of interceptors) {
-      await interceptor.onUserPrompt?.(modelInput(state), context);
+      const brief = await interceptor.onUserPrompt?.(modelInput(state), context);
+      if (brief) briefs.push(`[${interceptor.name}]: ${brief}`);
     }
-    return {};
+    if (briefs.length === 0) return {};
+    return { messages: [new HumanMessage(briefs.join("\n\n"))] };
   };
 
   const callModel = async (state: State, config: LangGraphRunnableConfig) => {
     const context = readPipelineContext(config);
     const messages = modelInput(state);
     const startedAt = Date.now();
-    const response = await invokeWithRetry(() => model.invoke(messages));
+    const response = await invokeWaiting(
+      { events: context.events, source: WORKER_SOURCE },
+      "Worker model",
+      () => model.invoke(messages)
+    );
     response.id ??= `step_${nanoid()}`;
     const toolCalls = (response.tool_calls ?? []).map((call) => {
       call.id ??= `call_${nanoid()}`;
-      return { id: call.id, name: call.name, args: call.args };
+      return {
+        id: call.id,
+        name: call.name,
+        args: call.args,
+        thoughtSignature: thoughtSignatureFor(response, call.id),
+      };
     });
     const thinking = extractThinking(response);
     context.events.emit({
@@ -98,28 +102,9 @@ export function createCompiledWorkflow(
       thinking: thinking || undefined,
       toolCalls,
       durationMs: Date.now() - startedAt,
+      inputTokens: response.usage_metadata?.input_tokens,
     });
     return { messages: [response] };
-  };
-
-  const denialFor = async (
-    call: ToolCall,
-    conversation: BaseMessage[],
-    context: PipelineContext
-  ): Promise<ToolMessage | null> => {
-    for (const interceptor of interceptors) {
-      if (!interceptor.onPreToolCall) continue;
-      const approval = await interceptor.onPreToolCall(call, conversation, context);
-      if (!approval.approved) {
-        return new ToolMessage({
-          status: "error",
-          content: `[INTERCEPTED by ${interceptor.name}]: ${approval.reason}`,
-          tool_call_id: call.id ?? "",
-          name: call.name,
-        });
-      }
-    }
-    return null;
   };
 
   const toolsNode = async (state: State, config: LangGraphRunnableConfig) => {
@@ -128,8 +113,17 @@ export function createCompiledWorkflow(
     const last = state.messages.at(-1);
     const calls = last && isAIMessage(last) ? (last.tool_calls ?? []) : [];
 
-    const verdicts = await Promise.all(calls.map((call) => denialFor(call, conversation, context)));
+    const verdicts = await Promise.all(
+      calls.map((call) => preToolDenial(interceptors, call, conversation, context))
+    );
     const denials = verdicts.filter((m) => m !== null);
+    const approved = calls.filter((call) => denials.every((d) => d.tool_call_id !== call.id));
+    if (approved.length > 0)
+      context.events.emit({
+        type: "waiting",
+        on: `Running ${approved.map((call) => call.name).join(", ")}`,
+        source: TOOL_SOURCE,
+      });
 
     // ToolNode skips calls that already have a ToolMessage, so only approved calls execute.
     const output: unknown = await toolNode.invoke(
@@ -141,7 +135,13 @@ export function createCompiledWorkflow(
     const executed = Array.isArray(raw)
       ? raw.filter((m: unknown): m is ToolMessage => m instanceof ToolMessage)
       : [];
-    const results = [...denials, ...executed];
+    const taught = await Promise.all(
+      calls.map(async (call) => {
+        const result = executed.find((m) => m.tool_call_id === call.id);
+        return result && withPostToolLessons(interceptors, call, result, conversation, context);
+      })
+    );
+    const results = [...denials, ...taught.filter((m) => m !== undefined)];
     const messages = calls
       .map((call) => results.find((m) => m.tool_call_id === call.id))
       .filter((m) => m !== undefined);
@@ -189,7 +189,7 @@ export function createCompiledWorkflow(
     .addEdge(START, "entry_interceptors")
     .addEdge("entry_interceptors", "agent")
     .addConditionalEdges("agent", afterAgentCondition, ["tools", "exit_interceptors"])
-    .addConditionalEdges("tools", afterToolsCondition, ["agent", "__end__"])
+    .addEdge("tools", "agent")
     .addConditionalEdges("exit_interceptors", afterExitCondition, ["agent", "__end__"]);
 
   return workflow.compile({ checkpointer });

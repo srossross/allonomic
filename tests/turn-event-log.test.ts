@@ -53,8 +53,14 @@ describe("turn event log", () => {
       interceptor: "Governor",
       action: {
         type: "push_intent",
-        intent: { id: "i", kind: "request", description: "d", constraints: [] },
+        intent: { id: "i", kind: "request", description: "d", completed_when: null, changelog: [] },
       },
+    });
+    sink.emit({
+      type: "context_files_loaded",
+      agent: "teacher",
+      hook: "preTool",
+      files: [{ path: "/w/agents/tools.md", size: 3, missing: false, loadedAt: "t" }],
     });
     expect(events.map((e) => turnEventSchema.parse(e))).toEqual(events);
   });
@@ -64,10 +70,20 @@ describe("turn event log", () => {
     sink.emit({ type: "turn_started", threadId: "t", prompt: "go" });
     sink.emit({ type: "turn_completed", retries: 0, finalResponse: "ok" });
     sink.emit({ type: "turn_failed", error: "boom", aborted: false });
+    sink.emit({
+      type: "context_files_loaded",
+      agent: "worker",
+      hook: "session",
+      files: [
+        { path: "/r/worker.md", size: 1, missing: false, loadedAt: "t" },
+        { path: "/w/AGENTS.md", size: 0, missing: true, loadedAt: "t" },
+      ],
+    });
     expect(events.map((e) => formatTraceLine(e))).toEqual([
       '[TURN_START] Turn 2: prompt="go"',
       "[TURN_SUCCESS] Turn 2 finished successfully (retries: 0).",
       "[TURN_ERROR] Turn 2 failed: boom",
+      "[CONTEXT_FILES] worker session: /r/worker.md, /w/AGENTS.md (missing)",
     ]);
   });
 });

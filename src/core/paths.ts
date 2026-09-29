@@ -5,6 +5,16 @@ export function join(...parts: string[]): string {
   return joined.length > 1 && joined.endsWith("/") ? joined.slice(0, -1) : joined;
 }
 
+export function normalize(path: string): string {
+  const segments: string[] = [];
+  for (const segment of path.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
+  }
+  return `/${segments.join("/")}`;
+}
+
 export function dirname(path: string): string {
   const trimmed = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
   const index = trimmed.lastIndexOf("/");

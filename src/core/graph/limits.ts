@@ -1,0 +1,1 @@
+export const GRAPH_RECURSION_LIMIT = 500;

@@ -15,9 +15,9 @@ export function ContextView({ contextList }: ContextViewProperties) {
 
   return (
     <div className="space-y-2">
-      <div className="border-border/40 text-muted-foreground flex items-center justify-between border-b pb-1 font-mono text-[11px]">
+      <div className="border-border/40 text-muted-foreground flex items-center justify-between border-b pb-1 font-mono text-xs">
         <span>Active Worker Context</span>
-        <span className="text-muted-foreground/70 text-[10px]">Interception loops excluded</span>
+        <span className="text-muted-foreground/70 text-2xs">Interception loops excluded</span>
       </div>
 
       {contextList.map((message, index) => (
@@ -26,7 +26,7 @@ export function ContextView({ contextList }: ContextViewProperties) {
           className="border-border/60 bg-muted/20 space-y-1.5 rounded-xs border p-2 font-mono text-xs"
         >
           {/* Header: Role badge & Name */}
-          <div className="flex items-center justify-between text-[10px]">
+          <div className="text-2xs flex items-center justify-between">
             <span
               className={`rounded-xs px-1.5 py-0.5 font-semibold tracking-wider uppercase ${
                 message.role === "system"
@@ -43,13 +43,13 @@ export function ContextView({ contextList }: ContextViewProperties) {
               {message.role}
               {message.name ? `: ${message.name}` : ""}
             </span>
-            <span className="text-muted-foreground/60 text-[10px]">#{index + 1}</span>
+            <span className="text-muted-foreground/60 text-2xs">#{index + 1}</span>
           </div>
 
           {/* Thinking trace if present */}
           {message.thinking && (
-            <div className="rounded-xs border border-purple-500/30 bg-purple-500/10 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-purple-200/90 select-text">
-              <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold text-purple-400">
+            <div className="rounded-xs border border-purple-500/30 bg-purple-500/10 p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-purple-200/90 select-text">
+              <div className="text-2xs mb-1 flex items-center gap-1 font-semibold text-purple-400">
                 <span>Thought Process</span>
               </div>
               {message.thinking}
@@ -79,7 +79,7 @@ export function ContextView({ contextList }: ContextViewProperties) {
             }
 
             return displayContent ? (
-              <div className="text-foreground/90 max-h-60 overflow-y-auto text-[11px] leading-relaxed whitespace-pre-wrap select-text">
+              <div className="text-foreground/90 max-h-60 overflow-y-auto text-xs leading-relaxed whitespace-pre-wrap select-text">
                 {displayContent}
               </div>
             ) : null;
@@ -88,18 +88,16 @@ export function ContextView({ contextList }: ContextViewProperties) {
           {/* Tool Calls if any */}
           {message.tool_calls && message.tool_calls.length > 0 && (
             <div className="border-border/40 space-y-1 border-t pt-1">
-              <span className="text-primary/80 text-[10px] font-semibold tracking-wider uppercase">
+              <span className="text-primary/80 text-2xs font-semibold tracking-wider uppercase">
                 Tool Calls:
               </span>
               {message.tool_calls.map((tc, tcIndex) => (
                 <div
                   key={tcIndex}
-                  className="border-border/40 bg-background/60 text-foreground/80 space-y-0.5 rounded-xs border p-1.5 text-[10px] select-text"
+                  className="border-border/40 bg-background/60 text-foreground/80 text-2xs space-y-0.5 rounded-xs border p-1.5 select-text"
                 >
                   <div className="text-primary font-semibold">{tc.name}</div>
-                  <pre className="overflow-x-auto text-[10px]">
-                    {JSON.stringify(tc.args, null, 2)}
-                  </pre>
+                  <pre className="text-2xs overflow-x-auto">{JSON.stringify(tc.args, null, 2)}</pre>
                 </div>
               ))}
             </div>

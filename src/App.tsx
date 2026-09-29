@@ -1,37 +1,23 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { ProjectsSidebar } from "@/components/sidebar/ProjectsSidebar";
 import { TabBar } from "@/components/tabs/TabBar";
+import { TabLoadErrorBanner } from "@/components/tabs/TabLoadErrorBanner";
 import { ChatPanel } from "@/components/chat/ChatPanel";
-import { ConstraintsAndIntentsPanel } from "@/components/inspector/ConstraintsAndIntentsPanel";
+import { IntentsPanel } from "@/components/inspector/IntentsPanel";
 import { useTabsManager } from "@/hooks/useTabsManager";
 import { usePromptResponses } from "@/hooks/usePromptResponses";
 import { useProjectManager } from "@/hooks/useProjectManager";
 import { fetchModelsApi } from "@/agent/api";
 import {
-  AVAILABLE_MODELS,
+  DEFAULT_EXECUTION_MODE,
+  DEFAULT_GOVERNOR_MODE,
   DEFAULT_MODEL_ID,
   INITIAL_TOOLS,
-  type InjectorMeta,
   type ModelOption,
 } from "@/types";
 
-export function App() {
-  const injectors: InjectorMeta[] = [];
-  const [models, setModels] = useState<ModelOption[]>(AVAILABLE_MODELS);
-
-  useEffect(() => {
-    async function loadModels() {
-      try {
-        const dynamicModels = await fetchModelsApi();
-        if (dynamicModels && dynamicModels.length > 0) {
-          setModels(dynamicModels);
-        }
-      } catch {
-        // Fallback already handled
-      }
-    }
-    void loadModels();
-  }, []);
+function App() {
+  const [models, setModels] = useState<ModelOption[]>([]);
 
   const newTabRef = useRef<() => void>(() => {});
 
@@ -43,13 +29,30 @@ export function App() {
     handleAddProject,
     handleRenameProject,
     handleDeleteProject,
-    handleStartContainer,
     globalDirPickerRef,
   } = useProjectManager(() => newTabRef.current());
 
+  useEffect(() => {
+    let isCancelled = false;
+    async function loadModels() {
+      try {
+        const loaded = await fetchModelsApi(activeProject?.path);
+        if (!isCancelled) setModels(loaded);
+      } catch (error) {
+        console.error("[Models] Failed to load models:", error);
+        globalThis.alert(
+          "Failed to load models: " + (error instanceof Error ? error.message : String(error))
+        );
+      }
+    }
+    void loadModels();
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeProject?.path]);
+
   const {
     tabs,
-    setTabs,
     activeTabId,
     activeTab,
     setActiveTabId,
@@ -59,21 +62,19 @@ export function App() {
     handleSelectThinkingLevel,
     handleSelectExecutionMode,
     handleCycleExecutionMode,
+    handleToggleHasNetworkAccess,
+    handleToggleTeacher,
+    handleSetInterceptorSettings,
+    handleCycleGovernorMode,
     handleSendMessage,
     handleStopMessage,
     handleClearConsole,
     handleToggleContext,
     handleToggleTool,
     handleSetAllTools,
-    runTurn,
   } = useTabsManager(activeProject);
 
-  const { handleRespondToPrompt } = usePromptResponses({
-    activeProject,
-    activeTab,
-    setTabs,
-    runTurn,
-  });
+  const { handleRespondToPrompt } = usePromptResponses({ activeProject, activeTab });
 
   useEffect(() => {
     newTabRef.current = handleNewTab;
@@ -132,15 +133,14 @@ export function App() {
         onAddProject={handleAddProject}
         onRenameProject={handleRenameProject}
         onDeleteProject={handleDeleteProject}
-        onStartContainer={handleStartContainer}
         projectStates={projectStates}
       />
 
       {/* RIGHT MAIN AREA: Tabs across top, then 60/40 panels */}
       <div className="flex h-full min-w-0 flex-1 flex-col">
-        {/* Workspace: 60% Chat / 40% Constraints & Intents (scoped to active tab) */}
+        {/* Workspace: 60% Chat / 40% Intents (scoped to active tab) */}
         <main className="flex min-h-0 w-full flex-1">
-          <section className="border-border/80 flex h-full w-[60%] min-w-0 flex-col border-r">
+          <section className="border-border/80 flex h-full w-3/5 min-w-0 flex-col border-r">
             <TabBar
               tabs={activeProjectTabs.map((t) => ({
                 id: t.id,
@@ -156,44 +156,64 @@ export function App() {
               onNewTab={handleNewTab}
               onToggleContext={handleToggleContext}
             />
+            {activeTab.loadErrors && activeTab.loadErrors.length > 0 && (
+              <TabLoadErrorBanner
+                errors={activeTab.loadErrors}
+                onCloseTab={() => handleCloseTab(activeTab.id)}
+              />
+            )}
             <ChatPanel
               messages={activeTab.messages}
               contextMessages={activeTab.contextMessages}
               showContext={activeTab.showContext}
               onToggleContext={() => handleToggleContext(activeTab.id)}
               loading={activeTab.loading}
+              waitingOn={activeTab.waitingOn}
               onSendMessage={handleSendMessage}
               onStopMessage={handleStopMessage}
               selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
               onSelectModel={handleSelectModel}
               models={models}
+              contextTokens={activeTab.contextTokens}
               thinkingLevel={activeTab.thinkingLevel || "Low"}
               onSelectThinkingLevel={handleSelectThinkingLevel}
-              executionMode={activeTab.executionMode || "manual"}
+              executionMode={activeTab.executionMode || DEFAULT_EXECUTION_MODE}
               onSelectExecutionMode={handleSelectExecutionMode}
               onCycleExecutionMode={handleCycleExecutionMode}
+              hasNetworkAccess={activeTab.hasNetworkAccess ?? false}
+              onToggleHasNetworkAccess={handleToggleHasNetworkAccess}
+              governorMode={activeTab.governorMode ?? DEFAULT_GOVERNOR_MODE}
+              onCycleGovernorMode={handleCycleGovernorMode}
+              isTeacherEnabled={activeTab.teacherEnabled ?? true}
+              onToggleTeacher={handleToggleTeacher}
               onRespondToPrompt={handleRespondToPrompt}
             />
           </section>
 
-          <section className="flex h-full w-[40%] min-w-0 flex-col">
-            <ConstraintsAndIntentsPanel
+          <section className="flex h-full w-2/5 min-w-0 flex-col">
+            <IntentsPanel
               key={activeTab.id}
               sessionId={activeTab.id}
               workspacePath={activeProject?.path || "."}
               selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
               thinkingLevel={activeTab.thinkingLevel || "Low"}
-              executionMode={activeTab.executionMode || "manual"}
+              executionMode={activeTab.executionMode || DEFAULT_EXECUTION_MODE}
+              governorMode={activeTab.governorMode ?? DEFAULT_GOVERNOR_MODE}
+              isTeacherEnabled={activeTab.teacherEnabled ?? true}
+              models={models}
+              interceptorSettings={activeTab.interceptorSettings}
+              onSetInterceptorSettings={handleSetInterceptorSettings}
               messages={activeTab.messages}
+              profile={activeTab.profile}
               intentStack={activeTab.governorState.intent_stack}
               completedIntents={activeTab.governorState.completed_intents}
-              globalConstraints={activeTab.governorState.global_constraints}
+              falseCompletions={activeTab.governorState.false_completions}
               consoleEvents={activeTab.consoleEvents || []}
+              agentFiles={activeTab.agentFiles || []}
               onClearConsole={() => handleClearConsole(activeTab.id)}
               enabledTools={activeTab.enabledTools || INITIAL_TOOLS}
               onToggleTool={handleToggleTool}
               onSetAllTools={handleSetAllTools}
-              injectors={injectors.length > 0 ? injectors : undefined}
             />
           </section>
         </main>

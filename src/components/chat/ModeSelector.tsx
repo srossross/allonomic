@@ -1,6 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronUp, Check } from "lucide-react";
-import { AVAILABLE_MODES, type ExecutionMode, type ModeOption } from "@/types";
+import {
+  AVAILABLE_MODES,
+  DEFAULT_EXECUTION_MODE,
+  type ExecutionMode,
+  type ModeOption,
+} from "@/types";
+import { MODE_STYLES } from "./modeStyles";
 
 interface ModeSelectorProps {
   executionMode?: ExecutionMode;
@@ -8,7 +14,7 @@ interface ModeSelectorProps {
 }
 
 export function ModeSelector({
-  executionMode = "manual",
+  executionMode = DEFAULT_EXECUTION_MODE,
   onSelectExecutionMode,
 }: ModeSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -35,31 +41,21 @@ export function ModeSelector({
   const currentModeObject: ModeOption =
     AVAILABLE_MODES.find((m) => m.id === executionMode) || AVAILABLE_MODES[0];
 
-  const isAcceptEdits = executionMode === "accept edits";
+  const current = MODE_STYLES[currentModeObject.id];
 
   return (
     <div className="relative" ref={menuReference}>
       <button
         type="button"
         onClick={() => setIsOpen((previous) => !previous)}
-        className={`flex cursor-pointer items-center gap-1 rounded-xs px-1.5 py-0.5 text-xs transition-colors ${
-          isAcceptEdits
-            ? "font-medium text-purple-400 hover:bg-purple-500/15"
-            : "text-muted-foreground/60 hover:bg-muted/40 hover:text-muted-foreground font-normal"
-        }`}
+        className={`flex cursor-pointer items-center gap-1 rounded-xs px-1.5 py-0.5 text-xs transition-colors ${current.trigger}`}
         title="Execution mode (Shift+Tab to cycle)"
       >
-        <span
-          className={
-            isAcceptEdits ? "font-medium text-purple-400" : "text-muted-foreground/70 font-medium"
-          }
-        >
-          {currentModeObject.label}
-        </span>
+        <span className={current.label}>{currentModeObject.label}</span>
         <ChevronUp
-          className={`size-3 transition-transform duration-150 ${
-            isAcceptEdits ? "text-purple-400/80" : "text-muted-foreground/50"
-          } ${isOpen ? "" : "rotate-180"}`}
+          className={`size-3 transition-transform duration-150 ${current.chevron} ${
+            isOpen ? "" : "rotate-180"
+          }`}
         />
       </button>
 
@@ -69,10 +65,10 @@ export function ModeSelector({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between px-2 py-1">
-            <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">
+            <span className="text-muted-foreground text-2xs font-semibold tracking-wider uppercase">
               Mode
             </span>
-            <kbd className="text-muted-foreground/80 bg-muted/60 border-border/70 py-0.2 rounded border px-1 font-mono text-[9px]">
+            <kbd className="text-muted-foreground/80 bg-muted/60 border-border/70 py-0.2 text-2xs rounded border px-1 font-mono">
               ⇧Tab
             </kbd>
           </div>
@@ -80,7 +76,7 @@ export function ModeSelector({
           <div className="space-y-0.5">
             {AVAILABLE_MODES.map((m) => {
               const isSelected = m.id === executionMode;
-              const isPurple = m.id === "accept edits";
+              const style = MODE_STYLES[m.id];
 
               return (
                 <button
@@ -91,46 +87,22 @@ export function ModeSelector({
                     setIsOpen(false);
                   }}
                   className={`flex w-full cursor-pointer items-center justify-between rounded-sm px-2 py-1.5 text-left text-xs transition-colors ${
-                    isSelected
-                      ? isPurple
-                        ? "bg-purple-500/15 font-medium text-purple-300"
-                        : "bg-muted/60 text-muted-foreground font-medium"
-                      : isPurple
-                        ? "text-purple-400/80 hover:bg-purple-500/10 hover:text-purple-300"
-                        : "text-muted-foreground/70 hover:bg-muted/40 hover:text-muted-foreground"
+                    isSelected ? style.itemSelected : style.item
                   }`}
                 >
                   <div className="flex flex-col">
                     <span
-                      className={`truncate ${
-                        isPurple
-                          ? isSelected
-                            ? "font-medium text-purple-400"
-                            : "text-purple-400/80"
-                          : isSelected
-                            ? "text-muted-foreground font-medium"
-                            : "text-muted-foreground/70"
-                      }`}
+                      className={`truncate ${isSelected ? style.itemLabelSelected : style.itemLabel}`}
                     >
                       {m.label}
                     </span>
                     {m.description && (
-                      <span
-                        className={`text-[10px] font-normal ${
-                          isPurple ? "text-purple-400/60" : "text-muted-foreground/50"
-                        }`}
-                      >
+                      <span className={`text-2xs font-normal ${style.description}`}>
                         {m.description}
                       </span>
                     )}
                   </div>
-                  {isSelected && (
-                    <Check
-                      className={`size-3 shrink-0 ${
-                        isPurple ? "text-purple-400" : "text-muted-foreground"
-                      }`}
-                    />
-                  )}
+                  {isSelected && <Check className={`size-3 shrink-0 ${style.check}`} />}
                 </button>
               );
             })}

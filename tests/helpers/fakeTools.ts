@@ -1,7 +1,8 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { createPendingResult } from "../../src/core/userPrompt";
-import type { ExecutionMode } from "../../src/types";
+import { isConfirmedByUser } from "../../src/core/tools/approval";
+import { createRejectedResult } from "../../src/core/userPrompt";
+import { EXECUTION_MODE_LEVELS, type ExecutionMode } from "../../src/types";
 
 export function createFakeTools(executionMode: ExecutionMode, log: string[] = []) {
   const readOnly = tool(
@@ -17,9 +18,10 @@ export function createFakeTools(executionMode: ExecutionMode, log: string[] = []
   );
 
   const mutating = tool(
-    async ({ command }) => {
-      if (executionMode === "manual") {
-        return createPendingResult({ kind: "confirm", label: command });
+    async ({ command }, config) => {
+      const prompt = { kind: "confirm" as const, label: command };
+      if (EXECUTION_MODE_LEVELS[executionMode] < 3 && !(await isConfirmedByUser(config, prompt))) {
+        return createRejectedResult("run_mutating_command", prompt);
       }
       log.push(`mutate:${command}`);
       return `mutated ${command}`;

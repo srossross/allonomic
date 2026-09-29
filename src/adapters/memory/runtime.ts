@@ -91,6 +91,8 @@ export function createMemoryRuntime(
       return result.startsWith("/") ? result : join("/", result);
     },
     resource: async (relativePath) => join(resourceRoot, relativePath),
+    home: async () => "/home/test",
+    appConfig: async () => "/appconfig",
   };
   return { platform: options.platform ?? "darwin", fs, shell, paths };
 }

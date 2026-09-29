@@ -132,7 +132,7 @@ export async function invokeWithRetry<T>(
         initialDelay * Math.pow(multiplier, attempt - 1),
         maxDelay
       );
-      const delayMs = Math.min(extractRetryDelayMs(error, calculatedBackoff), maxDelay);
+      const delayMs = extractRetryDelayMs(error, calculatedBackoff);
 
       if (options.onRetry) {
         options.onRetry(attempt, delayMs, error);

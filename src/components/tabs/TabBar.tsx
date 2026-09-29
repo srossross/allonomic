@@ -1,6 +1,7 @@
 import { Plus, X, MessageSquare, Loader2 } from "lucide-react";
+import { TAB_BAR_CLASS, tabCellClass } from "./tabStyles";
 
-export interface TabItem {
+interface TabItem {
   id: string;
   title: string;
   projectId: string;
@@ -27,7 +28,7 @@ export function TabBar({
   onToggleContext,
 }: TabBarProperties) {
   return (
-    <div className="border-border/80 bg-muted/20 flex h-9 shrink-0 items-center overflow-x-auto border-b text-xs select-none">
+    <div className={`${TAB_BAR_CLASS} overflow-x-auto`}>
       {/* Tabs List */}
       <div className="flex h-full min-w-0 flex-1 items-center">
         {tabs.map((tab) => {
@@ -45,7 +46,7 @@ export function TabBar({
             statusIcon = <div className="size-2 rounded-full bg-blue-500" title="Awaiting" />;
           } else {
             statusIcon = (
-              <span className="text-[10px] opacity-50" title="Idle">
+              <span className="text-2xs opacity-50" title="Idle">
                 💤
               </span>
             );
@@ -55,11 +56,7 @@ export function TabBar({
             <div
               key={tab.id}
               onClick={() => onSelectTab(tab.id)}
-              className={`group border-border/80 flex h-[calc(100%+1px)] max-w-[200px] cursor-pointer items-center gap-1.5 border-r px-3 transition-colors ${
-                isActive
-                  ? "bg-background text-foreground border-b-background before:bg-primary relative border-b font-medium before:absolute before:inset-x-0 before:top-0 before:h-[2px]"
-                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground border-b border-b-transparent"
-              }`}
+              className={`group max-w-50 ${tabCellClass(isActive)}`}
             >
               <MessageSquare className="size-3 shrink-0 opacity-70" />
               <span className="flex-1 truncate text-xs">{tab.title}</span>
@@ -74,7 +71,7 @@ export function TabBar({
                     e.stopPropagation();
                     onToggleContext(tab.id);
                   }}
-                  className={`rounded-xs px-1 py-0.5 font-mono text-[10px] leading-none transition-colors ${
+                  className={`text-2xs rounded-xs px-1 py-0.5 font-mono leading-none transition-colors ${
                     tab.showContext
                       ? "bg-primary text-primary-foreground font-semibold"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -109,7 +106,7 @@ export function TabBar({
           title="New Tab (⌘T)"
         >
           <Plus className="size-3.5" />
-          <kbd className="hidden font-mono text-[10px] opacity-60 sm:inline">⌘T</kbd>
+          <kbd className="text-2xs hidden font-mono opacity-60 sm:inline">⌘T</kbd>
         </button>
       </div>
     </div>

@@ -1,0 +1,29 @@
+final_response: >-
+  The PR has two review comments from Copilot on `src/bridge/duckdb_source.cpp`:
+
+
+  1. **Bare boolean check expressions aren't rewritten:**
+     - **Comment**: `PointCheckAtUpdatedRow` only visits child expressions, so a valid bare-boolean check such as `WITH CHECK (enabled)` is never rewritten. On INSERT, the generated SELECT exposes only seam columns (`c0`, `c1`, …), not `enabled`, and binding fails instead of evaluating the check. Make the rewrite handle the root expression as well as descendants (and add a bare-column check test).
+     - **Location**: Line 363 (around `PolicyShaper` INSERT check rewrite).
+
+  2. **Unqualified policy columns collide with seam column names (`c0`, `c1`,
+  ...):**
+     - **Comment**: The UPDATE `USING` predicate is appended unqualified while the generated statement also exposes seam columns named `c0`, `c1`, etc. If the target table has a policy column with one of those names, an expression such as `c0 > 0` becomes ambiguous between the target and `crossing_seam`, so an otherwise valid update fails to bind. Qualify policy column references with `target.table` before adding the predicate. (This issue also applies to DELETE on line 380).
+     - **Location**: Around lines 375–380 (`PolicyShaper` UPDATE / DELETE using predicates).
+messages:
+  - type: ai
+    content: >-
+      The PR has two review comments from Copilot on
+      `src/bridge/duckdb_source.cpp`:
+
+
+      1. **Bare boolean check expressions aren't rewritten:**
+         - **Comment**: `PointCheckAtUpdatedRow` only visits child expressions, so a valid bare-boolean check such as `WITH CHECK (enabled)` is never rewritten. On INSERT, the generated SELECT exposes only seam columns (`c0`, `c1`, …), not `enabled`, and binding fails instead of evaluating the check. Make the rewrite handle the root expression as well as descendants (and add a bare-column check test).
+         - **Location**: Line 363 (around `PolicyShaper` INSERT check rewrite).
+
+      2. **Unqualified policy columns collide with seam column names (`c0`,
+      `c1`, ...):**
+         - **Comment**: The UPDATE `USING` predicate is appended unqualified while the generated statement also exposes seam columns named `c0`, `c1`, etc. If the target table has a policy column with one of those names, an expression such as `c0 > 0` becomes ambiguous between the target and `crossing_seam`, so an otherwise valid update fails to bind. Qualify policy column references with `target.table` before adding the predicate. (This issue also applies to DELETE on line 380).
+         - **Location**: Around lines 375–380 (`PolicyShaper` UPDATE / DELETE using predicates).
+    tool_calls: []
+timestamp: 2026-09-27T15:12:12.730Z

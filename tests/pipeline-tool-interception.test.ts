@@ -9,7 +9,7 @@ import { createFakeTools } from "./helpers/fakeTools";
 import { recordingContext } from "./helpers/turnContext";
 
 function run(script: ScriptedTurn[], interceptor: AgentInterceptor) {
-  const { tools, log } = createFakeTools("accept edits");
+  const { tools, log } = createFakeTools("write");
   const compiled = createCompiledWorkflow(
     new FakeChatModel(script),
     new ToolNode(tools),

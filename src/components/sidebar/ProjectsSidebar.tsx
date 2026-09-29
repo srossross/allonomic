@@ -16,7 +16,6 @@ interface ProjectsSidebarProperties {
   onAddProject: (name: string, path: string) => void;
   onRenameProject: (projectId: string, newName: string) => void;
   onDeleteProject: (projectId: string) => void;
-  onStartContainer: (path: string) => void;
   projectStates?: Record<string, ProjectState>;
 }
 
@@ -27,7 +26,6 @@ export function ProjectsSidebar({
   onAddProject,
   onRenameProject,
   onDeleteProject,
-  onStartContainer,
   projectStates,
 }: ProjectsSidebarProperties) {
   const dirInputRef = useRef<HTMLInputElement>(null);
@@ -117,7 +115,7 @@ export function ProjectsSidebar({
           <span className="text-foreground text-xs font-semibold tracking-tight">
             {projects.find((p) => p.id === activeProjectId)?.name || "atomic"}
           </span>
-          <span className="text-muted-foreground/60 font-mono text-[10px]">/ projects</span>
+          <span className="text-muted-foreground/60 text-2xs font-mono">/ projects</span>
         </div>
         <button
           type="button"
@@ -144,7 +142,7 @@ export function ProjectsSidebar({
       {/* Project Flat List */}
       <div className="flex-1 overflow-y-auto">
         {projects.length === 0 ? (
-          <div className="text-muted-foreground p-3 text-[11px] italic">No projects opened.</div>
+          <div className="text-muted-foreground p-3 text-xs italic">No projects opened.</div>
         ) : (
           projects.map((proj) => {
             const isActive = proj.id === activeProjectId;
@@ -233,28 +231,7 @@ export function ProjectsSidebar({
                   )}
                 </div>
 
-                <div className="mt-1 flex w-full flex-col gap-0.5 text-[10px]">
-                  {proj.devcontainerStatus && (
-                    <div className="flex items-center gap-1.5 opacity-80">
-                      <span className="text-muted-foreground w-14">Container:</span>
-                      <span>
-                        {proj.devcontainerStatus === "running" && "🟢 Running"}
-                        {proj.devcontainerStatus === "stopped" && "🔴 Stopped"}
-                        {proj.devcontainerStatus === "not_setup" && "⚪ Not Set Up"}
-                      </span>
-                      {proj.devcontainerStatus !== "running" && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onStartContainer(proj.path);
-                          }}
-                          className="border-border hover:bg-muted rounded border px-1"
-                        >
-                          Start
-                        </button>
-                      )}
-                    </div>
-                  )}
+                <div className="text-2xs mt-1 flex w-full flex-col gap-0.5">
                   <div className="flex items-center gap-1.5 opacity-80">
                     <span className="text-muted-foreground w-14">Agent:</span>
                     <span>
@@ -267,7 +244,7 @@ export function ProjectsSidebar({
                   </div>
                 </div>
 
-                <div className="mt-1.5 w-full font-mono text-[9px] leading-tight break-all opacity-40">
+                <div className="text-2xs mt-1.5 w-full font-mono leading-tight break-all opacity-40">
                   {proj.path.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~")}
                 </div>
               </div>
@@ -277,7 +254,7 @@ export function ProjectsSidebar({
       </div>
 
       {/* Keyboard Shortcut Hint Footer */}
-      <div className="border-border/80 text-muted-foreground/60 border-t p-2 text-center font-mono text-[10px]">
+      <div className="border-border/80 text-muted-foreground/60 text-2xs border-t p-2 text-center font-mono">
         ⌘N: Add Project • ⌘T: New Tab
       </div>
     </aside>

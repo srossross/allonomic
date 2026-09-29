@@ -4,6 +4,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import unicorn from "eslint-plugin-unicorn";
 import eslintConfigPrettier from "eslint-config-prettier";
+import betterTailwindcss from "eslint-plugin-better-tailwindcss";
 
 export default tseslint.config(
   {
@@ -17,8 +18,25 @@ export default tseslint.config(
     plugins: {
       "react-hooks": reactHooks,
       "react-refresh": reactRefresh,
+      "better-tailwindcss": betterTailwindcss,
+    },
+    settings: {
+      "better-tailwindcss": {
+        entryPoint: "src/index.css",
+      },
     },
     rules: {
+      "better-tailwindcss/no-restricted-classes": [
+        "error",
+        {
+          restrict: [
+            {
+              pattern: String.raw`^(.*:)?(?!grid-cols-|transition-)[a-z0-9-]+-\[.+\](/.+)?$`,
+              message: "Arbitrary values are banned. Add a token to @theme in src/index.css.",
+            },
+          ],
+        },
+      ],
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "no-restricted-imports": [
@@ -122,6 +140,12 @@ export default tseslint.config(
     ],
     rules: {
       "no-restricted-imports": "off",
+    },
+  },
+  {
+    files: ["src/components/ui/**/*.tsx"],
+    rules: {
+      "better-tailwindcss/no-restricted-classes": "off",
     },
   },
   {

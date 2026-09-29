@@ -11,44 +11,94 @@ export const intentKindSchema = z.enum([
 
 export type IntentKind = z.infer<typeof intentKindSchema>;
 
-export const userIntentSchema = z.object({
+const userIntentSchema = z.object({
   id: z.string(),
   kind: intentKindSchema,
   description: z.string(),
-  constraints: z.array(z.string()),
+  completed_when: z.string().nullable().default(null),
+  changelog: z.array(z.string()).default([]),
 });
 
 export type UserIntent = z.infer<typeof userIntentSchema>;
 
+export const falseCompletionResolutionSchema = z.enum([
+  "ruled_out",
+  "clarified",
+  "invalid",
+  "superseded",
+]);
+
+export type FalseCompletionResolution = z.infer<typeof falseCompletionResolutionSchema>;
+
+export const EVIDENCE_RESOLUTIONS: ReadonlySet<FalseCompletionResolution> = new Set([
+  "ruled_out",
+  "clarified",
+]);
+
+export const evidenceSchema = z.object({
+  source: z.string(),
+  quote: z.string(),
+});
+
+export type Evidence = z.infer<typeof evidenceSchema>;
+
+const falseCompletionSchema = z.object({
+  id: z.string(),
+  intent_id: z.string(),
+  summary: z.string(),
+  relies_on: z.string(),
+  completes_as: z.string(),
+  false_because: z.string(),
+  detect_by: z.string().nullable(),
+  evidence: evidenceSchema.nullable(),
+  resolution: falseCompletionResolutionSchema.nullable(),
+  resolution_reason: z.string().nullable(),
+  still_assumed: z.string().nullable().default(null),
+  directive: z.string().nullable().default(null),
+});
+
+export type FalseCompletion = z.infer<typeof falseCompletionSchema>;
+
 export interface GovernorState {
   intent_stack: UserIntent[];
   completed_intents: UserIntent[];
-  global_constraints: string[];
+  false_completions: FalseCompletion[];
 }
 
 export const governorActionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("push_intent"), intent: userIntentSchema }),
+  z.object({
+    type: z.literal("update_intent"),
+    id: z.string(),
+    description: z.string().optional(),
+    kind: intentKindSchema.optional(),
+    completed_when: z.string().optional(),
+    what_changed: z.string().optional(),
+  }),
+  z.object({ type: z.literal("add_false_completion"), falseCompletion: falseCompletionSchema }),
+  z.object({ type: z.literal("no_false_completions"), intent_id: z.string(), reason: z.string() }),
+  z.object({
+    type: z.literal("resolve_false_completion"),
+    id: z.string(),
+    resolution: falseCompletionResolutionSchema,
+    evidence: evidenceSchema.optional(),
+    reason: z.string().optional(),
+    still_assumed: z.string().optional(),
+  }),
   z.object({ type: z.literal("pop_intent"), id: z.string().optional() }),
-  z.object({ type: z.literal("add_constraint"), constraint: z.string(), target: z.string() }),
-  z.object({ type: z.literal("remove_constraint"), constraint: z.string(), target: z.string() }),
   z.object({ type: z.literal("resolve_intent"), id: z.string() }),
 ]);
 
 export type GovernorAction = z.infer<typeof governorActionSchema>;
 
 export const verdictSchema = z.object({
-  verdict: z
-    .enum(["PASS", "FAIL"])
-    .describe("PASS if intent is satisfied and no constraints violated; FAIL otherwise."),
+  verdict: z.enum(["PASS", "FAIL"]).describe("PASS if intent is satisfied; FAIL otherwise."),
   intent_satisfied: z
     .boolean()
     .describe("Whether the top intent on the stack was satisfied by the conversation."),
   intent_assessment: z
     .string()
     .describe("Explanation of whether and how the top intent was satisfied or neglected."),
-  constraint_violations: z
-    .array(z.string())
-    .describe("List of constraints that were violated during execution, if any."),
   feedback_for_agent: z
     .string()
     .describe(

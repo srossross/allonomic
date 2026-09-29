@@ -6,18 +6,23 @@ import {
   type TurnEventListener,
 } from "@/core/turn/events";
 import { applyTurnEvent } from "@/core/turn/transcript";
+import { EMPTY_PROFILE } from "@/core/turn/profile";
 
 function isTerminal(event: TurnEvent): boolean {
   return event.type === "turn_completed" || event.type === "turn_failed";
 }
 
-export function applyTurnEventToTab(tab: TabData, event: TurnEvent): TabData {
+function applyTurnEventToTab(tab: TabData, event: TurnEvent): TabData {
   const next = applyTurnEvent(
     {
       messages: tab.messages,
       contextMessages: tab.contextMessages ?? [],
       consoleEvents: tab.consoleEvents ?? [],
+      agentFiles: tab.agentFiles ?? [],
       governorState: tab.governorState,
+      contextTokens: tab.contextTokens,
+      waitingOn: tab.waitingOn,
+      profile: tab.profile ?? EMPTY_PROFILE,
     },
     event
   );

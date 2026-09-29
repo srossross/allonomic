@@ -1,13 +1,18 @@
-import type { PipelineContext } from "../../src/core/graph/types";
+import type { AskUser, PipelineContext } from "../../src/core/graph/types";
 import { createTurnEventLog } from "../../src/core/turn/eventLog";
 import type { TurnEvent } from "../../src/core/turn/events";
 import type { GovernorState } from "../../src/core/governor/types";
 import { applyGovernorAction, EMPTY_GOVERNOR_STATE } from "../../src/core/governor/reducer";
 import type { GovernorDispatch } from "../../src/core/governor/tools";
 
+const noUser: AskUser = async (prompt) => {
+  throw new Error(`Unexpected prompt: ${prompt.label}`);
+};
+
 export function recordingContext(
   threadId = "t1",
-  turnIndex = 1
+  turnIndex = 1,
+  askUser: AskUser = noUser
 ): { context: PipelineContext; events: TurnEvent[] } {
   const { sink, events } = createTurnEventLog(turnIndex, []);
   return {
@@ -17,6 +22,7 @@ export function recordingContext(
       sessionId: "test-session",
       turnIndex,
       events: sink,
+      askUser,
     },
     events,
   };

@@ -6,7 +6,7 @@ import {
   readDir,
   copyFile,
 } from "@tauri-apps/plugin-fs";
-import { resolve, resolveResource } from "@tauri-apps/api/path";
+import { appConfigDir, homeDir, resolve, resolveResource } from "@tauri-apps/api/path";
 import { Command } from "@tauri-apps/plugin-shell";
 import type { FileStore, Shell, Paths, Runtime } from "@/core/ports";
 
@@ -33,6 +33,8 @@ const shell: Shell = {
 const paths: Paths = {
   resolve: (...parts) => resolve(...parts),
   resource: (relativePath) => resolveResource(relativePath),
+  home: () => homeDir(),
+  appConfig: () => appConfigDir(),
 };
 
 function detectPlatform(): string {

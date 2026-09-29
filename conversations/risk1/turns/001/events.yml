@@ -1,0 +1,140 @@
+version: 1
+events:
+  - type: turn_started
+    threadId: session-1790485373148
+    prompt: Read the GitHub pull request comments and reviews
+    seq: 0
+    at: 2026-09-27T05:03:00.569Z
+    turnIndex: 1
+  - type: governor_action
+    phase: entry
+    interceptor: Governor
+    action:
+      type: push_intent
+      intent:
+        id: itnt_ttu2tj-S2Az7PWTMkUmdX
+        kind: request
+        description: User wants the GitHub pull request comments and reviews to be read.
+    seq: 1
+    at: 2026-09-27T05:03:02.847Z
+    turnIndex: 1
+  - type: governor_verdict
+    phase: entry
+    interceptor: Governor
+    approved: true
+    reasoning: The user issued a direct request to read the GitHub pull request comments and reviews. Pushed request intent accordingly.
+    seq: 2
+    at: 2026-09-27T05:03:03.880Z
+    turnIndex: 1
+  - type: governor_action
+    phase: entry
+    interceptor: Governor
+    action:
+      type: add_false_completion
+      falseCompletion:
+        id: fcomp_wT-DNPg9jrOp457EYpivw
+        intent_id: itnt_ttu2tj-S2Az7PWTMkUmdX
+        summary: Reads a pull request the user did not mean
+        relies_on: The pull request for the current branch is the one the user meant.
+        completes_as: Agent picks the pull request for the current branch, reads its comments and reviews, and reports them.
+        false_because: The user did not name a pull request; they may have meant a different one or several.
+        detect_by: Confirm the pull request number with the user or show which one was chosen and why.
+        evidence: null
+        resolution: null
+        resolution_reason: null
+    seq: 3
+    at: 2026-09-27T05:03:06.414Z
+    turnIndex: 1
+  - type: governor_action
+    phase: entry
+    interceptor: Governor
+    action:
+      type: add_false_completion
+      falseCompletion:
+        id: fcomp_8YsaEIDINJ22YJTPER5Wp
+        intent_id: itnt_ttu2tj-S2Az7PWTMkUmdX
+        summary: Reports conversation comments but misses review comments
+        relies_on: The conversation thread holds every comment the user wants.
+        completes_as: Agent fetches the pull request conversation thread and reports those comments as the full set.
+        false_because: Inline review comments and review summaries live on separate endpoints; the user asked for both comments and reviews.
+        detect_by: Both the reviews endpoint and the review comments endpoint were queried.
+        evidence: null
+        resolution: null
+        resolution_reason: null
+    seq: 4
+    at: 2026-09-27T05:03:07.778Z
+    turnIndex: 1
+  - type: governor_verdict
+    phase: entry
+    interceptor: Governor
+    approved: true
+    reasoning: Added risks regarding the identification of the target pull request and the availability of GitHub CLI/API authentication to retrieve PR reviews and comments.
+    seq: 5
+    at: 2026-09-27T05:03:08.902Z
+    turnIndex: 1
+  - type: model_step
+    stepId: step_3AXEz8tLJpXWwM_gtHfmt
+    content: ""
+    toolCalls:
+      - id: call_1905906
+        name: run_read_only_command
+        args: &a1
+          command: gh pr list
+    durationMs: 1516
+    seq: 6
+    at: 2026-09-27T05:03:10.425Z
+    turnIndex: 1
+  - type: governor_tool_decision
+    interceptor: Governor
+    tool: run_read_only_command
+    toolCallId: call_1905906
+    args: *a1
+    approved: true
+    seq: 7
+    at: 2026-09-27T05:03:11.351Z
+    turnIndex: 1
+  - type: tool_result
+    toolCallId: call_1905906
+    name: run_read_only_command
+    content: |-
+      [STDERR]:
+      sh: 1: gh: not found
+    status: success
+    seq: 8
+    at: 2026-09-27T05:03:11.486Z
+    turnIndex: 1
+  - type: model_step
+    stepId: step_8otm_Yhk4ZTkNrwwdHl6d
+    content: ""
+    toolCalls:
+      - id: call_3507241
+        name: run_native_read_only_command
+        args: &a2
+          command: gh pr status
+    durationMs: 959
+    seq: 9
+    at: 2026-09-27T05:03:12.447Z
+    turnIndex: 1
+  - type: governor_tool_decision
+    interceptor: Governor
+    tool: run_native_read_only_command
+    toolCallId: call_3507241
+    args: *a2
+    approved: true
+    seq: 10
+    at: 2026-09-27T05:03:13.562Z
+    turnIndex: 1
+  - type: tool_result
+    toolCallId: call_3507241
+    name: run_native_read_only_command
+    content: '{"pending":true,"v":1,"prompt":{"kind":"confirm","label":"gh pr status"}}'
+    status: success
+    seq: 11
+    at: 2026-09-27T05:03:13.568Z
+    turnIndex: 1
+  - type: turn_completed
+    retries: 0
+    finalResponse: "Waiting for user: gh pr status"
+    seq: 12
+    at: 2026-09-27T05:03:13.570Z
+    turnIndex: 1

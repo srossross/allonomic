@@ -1,11 +1,12 @@
 import { describe, it, expect } from "bun:test";
 import { createTurnEventLog } from "../src/core/turn/eventLog";
 import { foldTurnEvents } from "../src/core/turn/transcript";
-import { createPendingResult, createRejectedResult } from "../src/core/userPrompt";
+import type { GovernorAction } from "../src/core/governor/types";
+import { createRejectedResult } from "../src/core/userPrompt";
 
 const prompt = { kind: "confirm" as const, label: "rm x" };
 
-function toolTurn(toolContent: string) {
+function toolTurn(toolContent: string | null) {
   const { sink, events } = createTurnEventLog(1, []);
   sink.emit({ type: "turn_started", threadId: "t", prompt: "delete" });
   sink.emit({
@@ -14,7 +15,7 @@ function toolTurn(toolContent: string) {
     interceptor: "Governor",
     action: {
       type: "push_intent",
-      intent: { id: "i1", kind: "request", description: "delete x", constraints: [] },
+      intent: { id: "i1", kind: "request", description: "delete x" },
     },
   });
   sink.emit({
@@ -32,18 +33,22 @@ function toolTurn(toolContent: string) {
     args: {},
     approved: true,
   });
-  sink.emit({
-    type: "tool_result",
-    toolCallId: "c1",
-    name: "run_mutating_command",
-    content: toolContent,
-  });
+  sink.emit(
+    toolContent === null
+      ? { type: "prompt_requested", promptId: "p1", toolCallId: "c1", prompt }
+      : {
+          type: "tool_result",
+          toolCallId: "c1",
+          name: "run_mutating_command",
+          content: toolContent,
+        }
+  );
   return events;
 }
 
 describe("transcript reducer", () => {
   it("builds user and assistant messages with tool status from events", () => {
-    const t = foldTurnEvents(toolTurn(createPendingResult(prompt)));
+    const t = foldTurnEvents(toolTurn(null));
     expect(t.messages.map((m) => [m.id, m.role])).toEqual([
       ["user-1", "user"],
       ["s1", "assistant"],
@@ -51,16 +56,21 @@ describe("transcript reducer", () => {
     const step = t.messages[1];
     expect(step.thinking).toBe("should delete");
     expect(step.thinkingDurationSeconds).toBe(2);
-    expect(step.toolCalls?.[0]).toMatchObject({ id: "c1", status: "pending", prompt });
+    expect(step.toolCalls?.[0]).toMatchObject({
+      id: "c1",
+      status: "pending",
+      prompt,
+      promptId: "p1",
+    });
     expect(t.governorState.intent_stack.map((i) => i.id)).toEqual(["i1"]);
-    expect(t.contextMessages.map((m) => m.role)).toEqual(["human", "ai", "tool"]);
+    expect(t.contextMessages.map((m) => m.role)).toEqual(["human", "ai"]);
     expect(t.consoleEvents.map((e) => e.type)).toEqual([
       "user_prompt",
       "governor_entry",
       "worker_thought",
       "worker_tool_call",
       "governor_pre_tool",
-      "tool_result",
+      "action",
     ]);
   });
 
@@ -95,10 +105,16 @@ describe("transcript reducer", () => {
     });
   });
 
-  it("a resumed turn updates the earlier tool card without adding a user message", () => {
-    const first = foldTurnEvents(toolTurn(createPendingResult(prompt)));
-    const { sink, events } = createTurnEventLog(2, []);
-    sink.emit({ type: "turn_started", threadId: "t", prompt: null });
+  it("an answered prompt clears the prompt and the result updates the same tool card", () => {
+    const first = foldTurnEvents(toolTurn(null));
+    const { sink, events } = createTurnEventLog(1, []);
+    sink.emit({ type: "prompt_answered", promptId: "p1", value: true });
+    const answered = foldTurnEvents(events, first);
+    expect(answered.messages[1].toolCalls?.[0]).toMatchObject({
+      status: "running",
+      prompt: undefined,
+      promptId: undefined,
+    });
     sink.emit({
       type: "tool_result",
       toolCallId: "c1",
@@ -128,5 +144,102 @@ describe("transcript reducer", () => {
     const t = foldTurnEvents(events);
     expect(t.messages.map((m) => m.content)).toEqual(["Error: boom"]);
     expect(t.consoleEvents.map((e) => e.badge)).toEqual(["ERROR", "STOP"]);
+  });
+
+  it("replays falseCompletion actions into governorState.false_completions", () => {
+    const { sink, events } = createTurnEventLog(1, []);
+    sink.emit({ type: "turn_started", threadId: "t", prompt: "add a box" });
+    const emit = (action: GovernorAction) =>
+      sink.emit({ type: "governor_action", phase: "entry", interceptor: "Governor", action });
+    emit({
+      type: "push_intent",
+      intent: { id: "i1", kind: "request", description: "add a box" },
+    });
+    emit({
+      type: "add_false_completion",
+      falseCompletion: {
+        id: "r1",
+        intent_id: "i1",
+        summary: "s",
+        relies_on: "r",
+        completes_as: "c",
+        false_because: "f",
+        detect_by: null,
+        evidence: null,
+        resolution: null,
+        resolution_reason: null,
+        still_assumed: null,
+      },
+    });
+    emit({
+      type: "resolve_false_completion",
+      id: "r1",
+      resolution: "superseded",
+      reason: "changed",
+    });
+
+    const t = foldTurnEvents(events);
+    expect(t.governorState.false_completions).toHaveLength(1);
+    expect(t.governorState.false_completions[0]).toMatchObject({
+      id: "r1",
+      resolution: "superseded",
+      resolution_reason: "changed",
+    });
+    expect(t.consoleEvents.map((e) => e.summary)).toContain(
+      "resolve_false_completion: 'r1' superseded — changed"
+    );
+  });
+});
+
+function preamble(loadedAt: string, isMissing = false) {
+  return { path: "/r/preamble.md", size: isMissing ? 0 : 10, missing: isMissing, loadedAt };
+}
+
+describe("agent files projection", () => {
+  it("merges hooks per agent+path and keeps the latest load", () => {
+    const { sink, events } = createTurnEventLog(1, []);
+    sink.emit({
+      type: "context_files_loaded",
+      agent: "governor",
+      hook: "userPrompt",
+      files: [preamble("2026-01-01T00:00:01Z")],
+    });
+    sink.emit({
+      type: "context_files_loaded",
+      agent: "governor",
+      hook: "preTool",
+      files: [preamble("2026-01-01T00:00:02Z", true)],
+    });
+    sink.emit({
+      type: "context_files_loaded",
+      agent: "governor",
+      hook: "userPrompt",
+      files: [preamble("2026-01-01T00:00:00Z")],
+    });
+    sink.emit({
+      type: "context_files_loaded",
+      agent: "teacher",
+      hook: "preTool",
+      files: [preamble("2026-01-01T00:00:03Z")],
+    });
+
+    expect(foldTurnEvents(events).agentFiles).toEqual([
+      {
+        agent: "governor",
+        path: "/r/preamble.md",
+        size: 0,
+        missing: true,
+        lastLoadedAt: "2026-01-01T00:00:02Z",
+        hooks: ["userPrompt", "preTool"],
+      },
+      {
+        agent: "teacher",
+        path: "/r/preamble.md",
+        size: 10,
+        missing: false,
+        lastLoadedAt: "2026-01-01T00:00:03Z",
+        hooks: ["preTool"],
+      },
+    ]);
   });
 });

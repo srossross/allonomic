@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { Copy, Check, Folder, FileText, Share2, Cpu, Sparkles } from "lucide-react";
 import type { UserIntent } from "@/core/governor/types";
-import type { Message, ThinkingLevel, ExecutionMode } from "@/types";
+import { GRAPH_RECURSION_LIMIT } from "@/core/graph/limits";
+import {
+  DEFAULT_EXECUTION_MODE,
+  type Message,
+  type ThinkingLevel,
+  type ExecutionMode,
+} from "@/types";
 
 export interface SettingsTabProps {
   sessionId?: string;
@@ -10,7 +16,6 @@ export interface SettingsTabProps {
   thinkingLevel?: ThinkingLevel;
   executionMode?: ExecutionMode;
   intentStack?: UserIntent[];
-  globalConstraints?: string[];
   messages?: Message[];
 }
 
@@ -19,9 +24,8 @@ export function SettingsTab({
   workspacePath = ".",
   selectedModel = "gemini-3.8-flash",
   thinkingLevel = "Low",
-  executionMode = "manual",
+  executionMode = DEFAULT_EXECUTION_MODE,
   intentStack = [],
-  globalConstraints = [],
   messages = [],
 }: SettingsTabProps) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -57,9 +61,6 @@ export function SettingsTab({
         ? "_None_"
         : intentStack.map((i) => `* [${i.kind}] \`${i.id}\`: ${i.description}`).join("\n"),
       "",
-      "#### Global Constraints:",
-      globalConstraints.length === 0 ? "_None_" : globalConstraints.map((c) => `* ${c}`).join("\n"),
-      "",
       "#### Message Trace:",
       messages
         .map((m, index) => {
@@ -89,7 +90,7 @@ export function SettingsTab({
           <button
             type="button"
             onClick={handleCopyShareableTrace}
-            className="bg-primary/10 hover:bg-primary/20 text-primary flex cursor-pointer items-center gap-1 rounded-xs px-2 py-0.5 text-[11px] font-medium transition-colors"
+            className="bg-primary/10 hover:bg-primary/20 text-primary flex cursor-pointer items-center gap-1 rounded-xs px-2 py-0.5 text-xs font-medium transition-colors"
             title="Format and copy the active session state to share in chat"
           >
             {copiedKey === "trace" ? (
@@ -106,9 +107,9 @@ export function SettingsTab({
           </button>
         </div>
 
-        <p className="text-muted-foreground pb-3 text-[11px]">
+        <p className="text-muted-foreground pb-3 text-xs">
           Session checkpoints, turns, and telemetry are persisted inside your workspace&apos;s{" "}
-          <code className="bg-muted text-foreground rounded-xs px-1 py-0.5 font-mono text-[10px]">
+          <code className="bg-muted text-foreground text-2xs rounded-xs px-1 py-0.5 font-mono">
             .allonomic/
           </code>{" "}
           folder.
@@ -117,7 +118,7 @@ export function SettingsTab({
         <div className="space-y-2">
           {/* Active Session ID */}
           <div className="bg-muted/40 rounded-xs p-2">
-            <div className="text-muted-foreground flex items-center justify-between text-[10px] uppercase">
+            <div className="text-muted-foreground text-2xs flex items-center justify-between uppercase">
               <span>Active Session ID</span>
               <button
                 type="button"
@@ -132,14 +133,12 @@ export function SettingsTab({
                 <span>{copiedKey === "sessionId" ? "Copied" : "Copy"}</span>
               </button>
             </div>
-            <div className="text-foreground mt-0.5 font-mono text-[11px] select-all">
-              {sessionId}
-            </div>
+            <div className="text-foreground mt-0.5 font-mono text-xs select-all">{sessionId}</div>
           </div>
 
           {/* Session Directory */}
           <div className="bg-muted/40 rounded-xs p-2">
-            <div className="text-muted-foreground flex items-center justify-between text-[10px] uppercase">
+            <div className="text-muted-foreground text-2xs flex items-center justify-between uppercase">
               <span>Session Directory</span>
               <button
                 type="button"
@@ -154,14 +153,14 @@ export function SettingsTab({
                 <span>{copiedKey === "sessionDir" ? "Copied" : "Copy"}</span>
               </button>
             </div>
-            <div className="text-foreground mt-0.5 font-mono text-[11px] break-all select-all">
+            <div className="text-foreground mt-0.5 font-mono text-xs break-all select-all">
               {sessionDir.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~")}
             </div>
           </div>
 
           {/* Turns Directory */}
           <div className="bg-muted/40 rounded-xs p-2">
-            <div className="text-muted-foreground flex items-center justify-between text-[10px] uppercase">
+            <div className="text-muted-foreground text-2xs flex items-center justify-between uppercase">
               <span>Turns Directory</span>
               <button
                 type="button"
@@ -176,7 +175,7 @@ export function SettingsTab({
                 <span>{copiedKey === "turnsDir" ? "Copied" : "Copy"}</span>
               </button>
             </div>
-            <div className="text-foreground mt-0.5 font-mono text-[11px] break-all select-all">
+            <div className="text-foreground mt-0.5 font-mono text-xs break-all select-all">
               {turnsDir.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~")}
             </div>
           </div>
@@ -190,7 +189,7 @@ export function SettingsTab({
           <span>Runtime Configuration</span>
         </div>
 
-        <div className="space-y-1.5 text-[11px]">
+        <div className="space-y-1.5 text-xs">
           <div className="flex items-center justify-between py-0.5">
             <span className="text-muted-foreground">Model</span>
             <span className="text-foreground font-mono font-medium">{selectedModel}</span>
@@ -208,7 +207,9 @@ export function SettingsTab({
           </div>
           <div className="flex items-center justify-between py-0.5">
             <span className="text-muted-foreground">Graph Recursion Limit</span>
-            <span className="text-foreground font-mono font-medium">50 steps</span>
+            <span className="text-foreground font-mono font-medium">
+              {GRAPH_RECURSION_LIMIT} steps
+            </span>
           </div>
         </div>
       </div>
@@ -219,7 +220,7 @@ export function SettingsTab({
           <FileText className="text-muted-foreground size-3.5" />
           <span>How to share this session</span>
         </div>
-        <p className="text-muted-foreground mt-1 text-[11px] leading-relaxed">
+        <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
           Click <strong>Share Session</strong> above to copy the formatted session trace to your
           clipboard. You can paste it directly into this chat to inspect prompts, intents, and tool
           calls.

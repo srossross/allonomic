@@ -3,7 +3,7 @@ import { resolve, dirname } from "@tauri-apps/api/path";
 import YAML from "yaml";
 import type { WorkspaceState } from "../types/persistence";
 
-export async function getWorkspaceStatePath(workspaceDir: string): Promise<string> {
+async function getWorkspaceStatePath(workspaceDir: string): Promise<string> {
   return await resolve(workspaceDir, ".allonomic", "workspace.yml");
 }
 
@@ -22,9 +22,15 @@ export async function loadWorkspaceState(workspaceDir: string): Promise<Workspac
       ? openTabIdsRaw.filter((id): id is string => typeof id === "string")
       : [];
 
+    const inspectorTabsRaw = Reflect.get(data, "inspector_tabs");
+    const inspectorTabs = Array.isArray(inspectorTabsRaw)
+      ? inspectorTabsRaw.filter((id): id is string => typeof id === "string")
+      : undefined;
+
     return {
       activeTabId,
       openTabIds,
+      inspectorTabs,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -40,18 +46,39 @@ export async function loadWorkspaceState(workspaceDir: string): Promise<Workspac
   }
 }
 
-export async function saveWorkspaceState(
+async function patchWorkspaceFile(
   workspaceDir: string,
-  state: WorkspaceState
+  patch: Record<string, unknown>
 ): Promise<void> {
   const filePath = await getWorkspaceStatePath(workspaceDir);
   await mkdir(await dirname(filePath), { recursive: true });
 
+  let raw = "";
+  try {
+    raw = await readTextFile(filePath);
+  } catch {
+    // first save: no file yet
+  }
+  const existing: unknown = YAML.parse(raw);
   const yml = YAML.stringify({
-    active_tab_id: state.activeTabId,
-    open_tab_ids: state.openTabIds,
+    ...(typeof existing === "object" && existing),
+    ...patch,
     updated_at: new Date().toISOString(),
   });
 
   await writeTextFile(filePath, yml);
+}
+
+export async function saveWorkspaceState(
+  workspaceDir: string,
+  state: WorkspaceState
+): Promise<void> {
+  await patchWorkspaceFile(workspaceDir, {
+    active_tab_id: state.activeTabId,
+    open_tab_ids: state.openTabIds,
+  });
+}
+
+export async function saveInspectorTabs(workspaceDir: string, tabs: string[]): Promise<void> {
+  await patchWorkspaceFile(workspaceDir, { inspector_tabs: tabs });
 }

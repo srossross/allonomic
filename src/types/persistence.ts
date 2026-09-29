@@ -1,6 +1,8 @@
-import type { ThinkingLevel, Message, ContextMessage, ExecutionMode } from "./chat";
-import type { ConsoleEvent } from "./inspector";
+import type { Message, ContextMessage } from "./chat";
+import type { AgentFileRow, ConsoleEvent } from "./inspector";
 import type { GovernorState } from "./tab";
+import type { RecoverableCall } from "../core/turn/events";
+import type { Profile } from "../core/turn/profile";
 
 export interface WorkspaceItem {
   id: string;
@@ -18,6 +20,7 @@ export interface WorkspacesConfig {
 export interface WorkspaceState {
   activeTabId: string;
   openTabIds: string[];
+  inspectorTabs?: string[];
 }
 
 export interface SessionMetadata {
@@ -26,12 +29,13 @@ export interface SessionMetadata {
   closed: boolean;
   createdAt: string;
   updatedAt: string;
-  model?: string;
-  thinkingLevel?: ThinkingLevel;
-  executionMode?: ExecutionMode;
-  enabledTools?: string[];
   turnCount?: number;
   lastPrompt?: string;
+}
+
+export interface SessionLoadError {
+  turnIndex: number | null;
+  message: string;
 }
 
 export interface RehydratedSession {
@@ -39,6 +43,11 @@ export interface RehydratedSession {
   messages: Message[];
   contextMessages: ContextMessage[];
   consoleEvents: ConsoleEvent[];
+  agentFiles: AgentFileRow[];
   governorState: GovernorState;
+  contextTokens?: number;
+  profile: Profile;
   nextTurnIndex: number;
+  loadErrors: SessionLoadError[];
+  unansweredCalls: RecoverableCall[];
 }

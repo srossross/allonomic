@@ -2,46 +2,114 @@ import { describe, it, expect } from "bun:test";
 import { createMemoryRuntime } from "../src/adapters/memory/runtime";
 import { createAgentTools } from "../src/core/tools";
 import { decodeToolResult } from "../src/core/userPrompt";
+import type { ExecutionMode, UserPrompt, UserPromptValue } from "../src/types";
+import { recordingContext } from "./helpers/turnContext";
+import type { ExecutionModeSource } from "../src/core/tools/approval";
 
-function writeTool(mode: "manual" | "accept edits", isApproved?: boolean) {
+function agentTools(mode: ExecutionModeSource, answer: UserPromptValue = true) {
   const runtime = createMemoryRuntime();
-  const tools = createAgentTools(runtime, "/w", mode, { approved: isApproved });
-  const write = tools.find((t) => t.name === "write_file")!;
-  const mutate = tools.find((t) => t.name === "run_mutating_command")!;
-  return { runtime, write, mutate };
+  const prompts: UserPrompt[] = [];
+  const { context } = recordingContext("t1", 1, async (prompt) => {
+    prompts.push(prompt);
+    return answer;
+  });
+  const config = { configurable: { context } };
+  const tools = createAgentTools(runtime, "/w", mode);
+  const invoker = (name: string) => {
+    const t = tools.find((candidate) => candidate.name === name)!;
+    return (args: Record<string, unknown>) => t.invoke(args, config);
+  };
+  return {
+    runtime,
+    prompts,
+    read: invoker("read_file"),
+    write: invoker("write_file"),
+    list: invoker("list_files"),
+    shells: [1, 2, 3, 4].map((level) =>
+      invoker(tools.find((t) => t.name.startsWith(`shell_${level}_`))!.name)
+    ),
+  };
 }
 
 describe("tool approval gating", () => {
-  it("manual mode: write_file returns a confirm prompt and writes nothing", async () => {
-    const { runtime, write } = writeTool("manual");
-    const result = await write.invoke({ filePath: "a.txt", content: "hello" });
-    expect(decodeToolResult(result)).toEqual({
-      status: "pending",
-      prompt: { kind: "confirm", label: "Write a.txt", detail: "5 bytes" },
-    });
-    expect(runtime.fs.files.size).toBe(0);
+  it("asks for shells above the mode's level", async () => {
+    const expected: Array<[ExecutionMode, number]> = [
+      ["restricted", 3],
+      ["read", 2],
+      ["write", 1],
+      ["god", 0],
+    ];
+    for (const [mode, count] of expected) {
+      const { shells, prompts } = agentTools(mode);
+      for (const shell of shells) await shell({ command: "ls" });
+      expect(prompts).toHaveLength(count);
+    }
   });
 
-  it("manual mode + approved: write_file writes", async () => {
-    const { runtime, write } = writeTool("manual", true);
-    const result = await write.invoke({ filePath: "a.txt", content: "hello" });
-    expect(decodeToolResult(result)).toEqual({ status: "executed" });
-    expect(await runtime.fs.readText("/w/a.txt")).toBe("hello");
+  it("reads the current mode when deciding whether to ask", async () => {
+    let mode: ExecutionMode = "read";
+    const { shells, prompts } = agentTools(async () => mode);
+    await shells[2]({ command: "make" });
+    expect(prompts).toHaveLength(1);
+    mode = "write";
+    await shells[2]({ command: "make" });
+    expect(prompts).toHaveLength(1);
   });
 
-  it("accept edits: write_file never prompts", async () => {
-    const { runtime, write } = writeTool("accept edits");
-    await write.invoke({ filePath: "a.txt", content: "hello" });
-    expect(await runtime.fs.readText("/w/a.txt")).toBe("hello");
+  it("a declined prompt rejects without running", async () => {
+    const { shells, runtime } = agentTools("restricted", false);
+    const result = await shells[3]({ command: "make" });
+    expect(decodeToolResult(result)).toEqual({ status: "rejected" });
+    expect(runtime.shell.calls).toHaveLength(0);
   });
 
-  it("manual mode: run_mutating_command returns the command as the label", async () => {
-    const { runtime, mutate } = writeTool("manual");
-    runtime.shell = { execute: async () => ({ code: 0, stdout: "abc123\trunning\n", stderr: "" }) };
-    const result = await mutate.invoke({ command: "go mod tidy" });
-    expect(decodeToolResult(result)).toEqual({
-      status: "pending",
-      prompt: { kind: "confirm", label: "go mod tidy" },
-    });
+  it("an accepted prompt runs the tool", async () => {
+    const { shells, runtime } = agentTools("restricted", true);
+    await shells[3]({ command: "make" });
+    expect(runtime.shell.calls).toHaveLength(1);
+  });
+
+  it("write_file in the project is level 3", async () => {
+    const readMode = agentTools("read", false);
+    const result = await readMode.write({ filePath: "a.txt", content: "hello" });
+    expect(decodeToolResult(result)).toEqual({ status: "rejected" });
+    expect(readMode.prompts).toEqual([
+      {
+        kind: "confirm",
+        label: "Write a.txt",
+        detail: "5 bytes",
+        mode: "write",
+        currentMode: "read",
+      },
+    ]);
+    expect(readMode.runtime.fs.files.has("/w/a.txt")).toBe(false);
+
+    const writeMode = agentTools("write");
+    await writeMode.write({ filePath: "a.txt", content: "hello" });
+    expect(writeMode.prompts).toHaveLength(0);
+    expect(await writeMode.runtime.fs.readText("/w/a.txt")).toBe("hello");
+  });
+
+  it("write_file to a cache path is level 2", async () => {
+    const { write, prompts } = agentTools("read");
+    await write({ filePath: "/home/test/.npm/x", content: "x" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("read_file level follows the path", async () => {
+    const { runtime, read, prompts } = agentTools("restricted", false);
+    runtime.fs.files.set("/w/a.txt", "a");
+    expect(await read({ filePath: "a.txt" })).toBe("a");
+    await read({ filePath: "/etc/hosts" });
+    await read({ filePath: "../other/x" });
+    expect(prompts).toHaveLength(2);
+  });
+
+  it("denied paths are level 4", async () => {
+    const { read, write, list, prompts } = agentTools("write", false);
+    await read({ filePath: ".allonomic/x" });
+    await write({ filePath: ".allonomic/x", content: "" });
+    await list({ directory: ".allonomic" });
+    expect(prompts).toHaveLength(3);
   });
 });

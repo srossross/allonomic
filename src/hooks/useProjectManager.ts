@@ -6,10 +6,8 @@ import {
   fetchWorkspacesApi,
   addWorkspaceApi,
   setActiveWorkspaceApi,
-  getDevContainerStatusApi,
   renameWorkspaceApi,
   deleteWorkspaceApi,
-  startContainerApi,
 } from "@/agent/api";
 
 export function useProjectManager(onNewTab?: () => void) {
@@ -33,45 +31,6 @@ export function useProjectManager(onNewTab?: () => void) {
       }
     }
     void loadWorkspaces();
-  }, []);
-
-  useEffect(() => {
-    const pollStatuses = async () => {
-      setProjects((currentProjects) => {
-        const checkAll = async () => {
-          const updated = await Promise.all(
-            currentProjects.map(async (p) => {
-              try {
-                const res = await getDevContainerStatusApi(p.path);
-                if (p.containerId !== res.containerId || p.devcontainerStatus !== res.status) {
-                  return { ...p, containerId: res.containerId, devcontainerStatus: res.status };
-                }
-              } catch {
-                if (p.containerId !== null || p.devcontainerStatus !== "not_setup") {
-                  return { ...p, containerId: null, devcontainerStatus: "not_setup" as const };
-                }
-              }
-              return p;
-            })
-          );
-
-          const hasChanges = updated.some(
-            (p, i) =>
-              p.containerId !== currentProjects[i].containerId ||
-              p.devcontainerStatus !== currentProjects[i].devcontainerStatus
-          );
-          if (hasChanges) {
-            setProjects(updated);
-          }
-        };
-        void checkAll();
-        return currentProjects;
-      });
-    };
-
-    pollStatuses();
-    const interval = setInterval(pollStatuses, 5000);
-    return () => clearInterval(interval);
   }, []);
 
   const handleSelectProject = useCallback(async (id: string) => {
@@ -137,17 +96,6 @@ export function useProjectManager(onNewTab?: () => void) {
     }
   }, []);
 
-  const handleStartContainer = useCallback(async (path: string) => {
-    try {
-      await startContainerApi(path);
-    } catch (error) {
-      console.error("[ProjectManager] Failed to start container:", error);
-      globalThis.alert(
-        "Failed to start container: " + (error instanceof Error ? error.message : String(error))
-      );
-    }
-  }, []);
-
   const triggerDirPicker = useCallback(async () => {
     try {
       const selectedPath = await open({
@@ -208,7 +156,6 @@ export function useProjectManager(onNewTab?: () => void) {
     handleAddProject,
     handleRenameProject,
     handleDeleteProject,
-    handleStartContainer,
     triggerDirPicker,
     globalDirPickerRef,
   };

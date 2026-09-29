@@ -1,27 +1,65 @@
 import { tool } from "@langchain/core/tools";
-import type { ExecutionMode } from "@/types";
+import { DEFAULT_EXECUTION_MODE, LEVEL_MODES, type AccessLevel } from "@/types";
 import type { Runtime, ShellResult } from "../ports";
-import { resolveDevContainer, invalidateDevContainer, ensureContainer } from "../devcontainer";
-import { createPendingResult } from "../userPrompt";
+import { createRejectedResult } from "../userPrompt";
 import type { AgentToolOptions } from "./index";
+import {
+  currentMode,
+  isConfirmedByUser,
+  requiresApproval,
+  type ExecutionModeSource,
+} from "./approval";
 import { TOOL_SPECS } from "./specs";
+import { formatShellResult } from "./shellResult";
+import { resolveSettings } from "../config/settings";
+import {
+  SANDBOX_TMP_ROOT,
+  sandboxRules,
+  sandboxVariables,
+  type SandboxLevel,
+  type SandboxRules,
+  type SandboxVariables,
+} from "./sandboxConfig";
 
-const NOT_RUNNING =
-  "SECURITY EXCEPTION: Dev container is not running. Host execution is strictly disabled.";
+function subpaths(prefix: string, count: number): string {
+  return Array.from(
+    { length: count },
+    (_, index) => ` (subpath (param "${prefix}_${index}"))`
+  ).join("");
+}
 
-const SEATBELT_READ_ONLY = `(version 1)
-(allow default)
-(deny file-write*)
-(allow file-write*
-  (literal "/dev/null")
-  (literal "/dev/stdout")
-  (literal "/dev/stderr")
-  (literal "/dev/tty")
-  (literal "/dev/dtracehelper"))`;
+export function seatbeltProfile(rules: SandboxRules, hasNetwork: boolean): string {
+  const profile = [
+    "(version 1)",
+    "(allow default)",
+    "(deny file-read-data)",
+    `(allow file-read-data (literal "/")${subpaths("READ", rules.read.length)})`,
+    "(deny file-write*)",
+    `(allow file-write*
+  (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr")
+  (literal "/dev/tty") (literal "/dev/dtracehelper")
+  (literal "${SANDBOX_TMP_ROOT}")${subpaths("WRITE", rules.write.length)})`,
+  ];
+  if (rules.deny.length > 0)
+    profile.push(`(deny file-read-data file-write*${subpaths("DENY", rules.deny.length)})`);
+  if (!hasNetwork) profile.push("(deny network-outbound (remote ip))");
+  return profile.join("\n");
+}
 
-function nativeReadOnlyInvocation(
+function sandboxParams(rules: SandboxRules): string[] {
+  const params = [
+    ...rules.read.map((path, index) => `READ_${index}=${path}`),
+    ...rules.write.map((path, index) => `WRITE_${index}=${path}`),
+    ...rules.deny.map((path, index) => `DENY_${index}=${path}`),
+  ];
+  return params.flatMap((param) => ["-D", param]);
+}
+
+function sandboxInvocation(
   platform: string,
-  workdir: string,
+  rules: SandboxRules,
+  hasNetwork: boolean,
+  { project, tmp }: SandboxVariables,
   command: string
 ): { program: string; args: string[] } {
   switch (platform) {
@@ -30,122 +68,79 @@ function nativeReadOnlyInvocation(
         program: "sandbox-exec",
         args: [
           "-p",
-          SEATBELT_READ_ONLY,
+          seatbeltProfile(rules, hasNetwork),
+          ...sandboxParams(rules),
           "/bin/sh",
           "-c",
-          'cd "$0" && /bin/sh -c "$1"',
-          workdir,
+          'mkdir -p "$1" 2>/dev/null; cd "$0" && TMPDIR="$1" exec /bin/sh -c "$2"',
+          project,
+          tmp,
           command,
         ],
       };
     }
     default: {
-      throw new Error(`run_native_read_only_command is not implemented on ${platform}`);
+      throw new Error(`sandboxed shell is not implemented on ${platform}`);
     }
   }
 }
 
-function formatOutput(stdout: string, stderr: string): string {
-  const out = stdout ? stdout.trim() : "";
-  const error = stderr ? stderr.trim() : "";
-  if (error && out) return `${out}\n[STDERR]:\n${error}`;
-  return error ? `[STDERR]:\n${error}` : out || "(command completed with no output)";
-}
-
-function isStaleContainer(result: ShellResult): boolean {
-  return result.code !== 0 && /No such container|is not running/i.test(result.stderr);
-}
-
-async function resolveRunning(runtime: Runtime, workspaceDir: string) {
-  const dc = await resolveDevContainer(runtime, workspaceDir);
-  if (dc.status === "running") return dc;
-  await ensureContainer(runtime, workspaceDir);
-  return resolveDevContainer(runtime, workspaceDir);
-}
-
-async function execInContainer(
-  runtime: Runtime,
-  workspaceDir: string,
-  buildArgs: (containerId: string, workdir: string) => string[]
-): Promise<ShellResult> {
-  const run = async () => {
-    const dc = await resolveRunning(runtime, workspaceDir);
-    if (dc.status !== "running" || !dc.containerId || !dc.workdir) throw new Error(NOT_RUNNING);
-    return runtime.shell.execute("docker", [
-      "exec",
-      "-w",
-      dc.workdir,
-      dc.containerId,
-      ...buildArgs(dc.containerId, dc.workdir),
-    ]);
-  };
-  const first = await run();
-  if (!isStaleContainer(first)) return first;
-  await invalidateDevContainer(runtime, workspaceDir);
-  return run();
+async function timed(run: () => Promise<ShellResult>): Promise<string> {
+  const start = performance.now();
+  const { stdout, stderr, code } = await run();
+  return formatShellResult(stdout, stderr, code, performance.now() - start);
 }
 
 export function createShellTools(
   runtime: Runtime,
   workspaceDir: string,
-  executionMode: ExecutionMode = "manual",
+  executionMode: ExecutionModeSource = DEFAULT_EXECUTION_MODE,
   options: AgentToolOptions = {}
 ) {
-  const runReadOnlyCommand = tool(async ({ command }) => {
-    try {
-      const { stdout, stderr } = await execInContainer(runtime, workspaceDir, (_, workdir) => [
-        "bwrap",
-        "--bind",
-        "/",
-        "/",
-        "--dev-bind",
-        "/dev",
-        "/dev",
-        "--ro-bind",
-        workdir,
-        workdir,
-        "sh",
-        "-c",
-        command,
-      ]);
-      return formatOutput(stdout, stderr);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      return `Error executing command "${command}": ${message}`;
-    }
-  }, TOOL_SPECS.runReadOnlyCommand);
+  const runSandboxed = async (level: SandboxLevel, command: string) => {
+    const variables = await sandboxVariables(runtime, workspaceDir);
+    const settings = await resolveSettings(runtime, workspaceDir, options.sessionId);
+    const rules = sandboxRules(settings.sandbox, level, variables);
+    const { program, args } = sandboxInvocation(
+      runtime.platform,
+      rules,
+      settings.networkAccess,
+      variables,
+      command
+    );
+    return timed(() => runtime.shell.execute(program, args));
+  };
 
-  const runMutatingCommand = tool(async ({ command }) => {
-    try {
-      if (executionMode === "manual" && !options.approved) {
-        const dc = await resolveRunning(runtime, workspaceDir);
-        if (dc.status !== "running") throw new Error(NOT_RUNNING);
-        return createPendingResult({ kind: "confirm", label: command });
-      }
-      const { stdout, stderr } = await execInContainer(runtime, workspaceDir, () => [
-        "sh",
-        "-c",
-        command,
-      ]);
-      return formatOutput(stdout, stderr);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      return `Error executing command "${command}": ${message}`;
-    }
-  }, TOOL_SPECS.runMutatingCommand);
-
-  const runNativeReadOnlyCommand = tool(async ({ command }) => {
+  const runUnsandboxed = async (command: string) => {
     const workdir = await runtime.paths.resolve(workspaceDir);
-    const { program, args } = nativeReadOnlyInvocation(runtime.platform, workdir, command);
-    if (!options.approved) return createPendingResult({ kind: "confirm", label: command });
-    try {
-      const { stdout, stderr } = await runtime.shell.execute(program, args);
-      return formatOutput(stdout, stderr);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      return `Error executing command "${command}": ${message}`;
-    }
-  }, TOOL_SPECS.runNativeReadOnlyCommand);
+    return timed(() =>
+      runtime.shell.execute("sh", ["-c", 'cd "$0" && exec /bin/sh -c "$1"', workdir, command])
+    );
+  };
 
-  return [runReadOnlyCommand, runMutatingCommand, runNativeReadOnlyCommand];
+  const shellTool = (level: AccessLevel, spec: typeof TOOL_SPECS.shellReadOnly) =>
+    tool(async ({ command }: { command: string }, config) => {
+      try {
+        const mode = await currentMode(executionMode);
+        const prompt = {
+          kind: "confirm" as const,
+          label: command,
+          mode: LEVEL_MODES[level],
+          currentMode: mode,
+        };
+        if (requiresApproval(level, mode) && !(await isConfirmedByUser(config, prompt)))
+          return createRejectedResult(spec.name, prompt);
+        return level === 4 ? await runUnsandboxed(command) : await runSandboxed(level, command);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return `Error executing command "${command}": ${message}`;
+      }
+    }, spec);
+
+  return [
+    shellTool(1, TOOL_SPECS.shellProjectReadOnly),
+    shellTool(2, TOOL_SPECS.shellReadOnly),
+    shellTool(3, TOOL_SPECS.shellProjectWrite),
+    shellTool(4, TOOL_SPECS.shellFullAccess),
+  ];
 }

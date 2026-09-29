@@ -1,3 +1,4 @@
+import YAML from "yaml";
 import type { FileStore } from "../ports";
 import { join, basename } from "../paths";
 import { HumanMessage, AIMessage, BaseMessage } from "@langchain/core/messages";
@@ -5,6 +6,8 @@ import type { GovernorState } from "../governor/types";
 import { applyGovernorAction, EMPTY_GOVERNOR_STATE } from "../governor/reducer";
 import { loadSessionTurns, nextTurnIndexAfter, turnDirName } from "../turn/turnFiles";
 import type { TurnEvent } from "../turn/events";
+
+const METADATA_FILE = "metadata.yml";
 
 export interface ResumeResult {
   sessionId: string;
@@ -43,6 +46,17 @@ async function copyDirRecursive(fs: FileStore, src: string, dst: string) {
   }
 }
 
+async function copyMetadata(fs: FileStore, sourceDir: string, newDir: string) {
+  const source = join(sourceDir, METADATA_FILE);
+  if (!(await fs.exists(source))) return;
+  const data: unknown = YAML.parse(await fs.readText(source));
+  const fields = data && typeof data === "object" ? data : {};
+  await fs.writeText(
+    join(newDir, METADATA_FILE),
+    YAML.stringify({ ...fields, session_id: basename(newDir) })
+  );
+}
+
 function rethrow(turnIndex: number, error: unknown): never {
   throw new Error(
     `Failed to load turn ${turnIndex}: ${error instanceof Error ? error.message : String(error)}`,
@@ -69,6 +83,7 @@ export async function resumeFromDir(
       const name = turnDirName(turnIndex);
       await copyDirRecursive(fs, join(sourceDir, "turns", name), join(newDir, "turns", name));
     }
+    await copyMetadata(fs, sourceDir, newDir);
   }
 
   const sessionDir = newDir ?? sourceDir;

@@ -1,24 +1,25 @@
 import { useEffect, useCallback } from "react";
-import {
-  type TabData,
-  type Project,
-  INITIAL_TOOLS,
-  DEFAULT_MODEL_ID,
-  PLACEHOLDER_TAB_ID,
-} from "@/types";
+import { type TabData, type Project, PLACEHOLDER_TAB_ID } from "@/types";
 import {
   fetchWorkspaceStateApi,
   saveWorkspaceStateApi,
   fetchSessionsApi,
   rehydrateSessionApi,
   saveSessionMetadataApi,
+  fetchSessionSettingsApi,
+  updateSessionSettingsApi,
 } from "@/agent/api";
+import type { Settings, SettingsPatch } from "@/core/config/settings";
+import { EMPTY_GOVERNOR_STATE } from "@/core/governor/reducer";
+import type { RecoverableCall } from "@/core/turn/events";
+import { settingsToTab } from "./tabSettings";
 
 interface UseTabsPersistenceParameters {
   activeProject: Project;
   tabsRef: React.RefObject<TabData[]>;
   setTabs: React.Dispatch<React.SetStateAction<TabData[]>>;
   setActiveTabId: (id: string) => void;
+  recoverTab: (tab: TabData, calls: RecoverableCall[]) => Promise<void>;
 }
 
 export function useTabsPersistence({
@@ -26,6 +27,7 @@ export function useTabsPersistence({
   tabsRef,
   setTabs,
   setActiveTabId,
+  recoverTab,
 }: UseTabsPersistenceParameters) {
   useEffect(() => {
     let isCancelled = false;
@@ -47,10 +49,12 @@ export function useTabsPersistence({
 
         if (tabIdsToLoad.length > 0) {
           const loadedTabs: TabData[] = [];
+          const recoveries: Array<{ tab: TabData; calls: RecoverableCall[] }> = [];
           for (const sessionId of tabIdsToLoad) {
             try {
               const rehydrated = await rehydrateSessionApi(activeProject.path, sessionId);
-              loadedTabs.push({
+              const settings = await fetchSessionSettingsApi(activeProject.path, sessionId);
+              const tab: TabData = {
                 id: rehydrated.metadata.sessionId,
                 title: rehydrated.metadata.title,
                 projectId: activeProject.id,
@@ -58,19 +62,34 @@ export function useTabsPersistence({
                 messages: rehydrated.messages,
                 contextMessages: rehydrated.contextMessages,
                 consoleEvents: rehydrated.consoleEvents,
-                enabledTools: rehydrated.metadata.enabledTools || INITIAL_TOOLS,
+                agentFiles: rehydrated.agentFiles,
                 governorState: rehydrated.governorState,
                 loading: false,
-                selectedModel: rehydrated.metadata.model || DEFAULT_MODEL_ID,
-                thinkingLevel: rehydrated.metadata.thinkingLevel || "Low",
-                executionMode: rehydrated.metadata.executionMode || "manual",
-              });
+                ...settingsToTab(settings),
+                loadErrors: rehydrated.loadErrors,
+                contextTokens: rehydrated.contextTokens,
+                profile: rehydrated.profile,
+              };
+              loadedTabs.push(tab);
+              if (rehydrated.unansweredCalls.length > 0)
+                recoveries.push({ tab, calls: rehydrated.unansweredCalls });
             } catch (error) {
               console.error(`[TabsPersistence] Failed to rehydrate session ${sessionId}:`, error);
-              globalThis.alert(
-                `Failed to rehydrate session ${sessionId}: ` +
-                  (error instanceof Error ? error.message : String(error))
-              );
+              loadedTabs.push({
+                id: sessionId,
+                title: sessionId,
+                projectId: activeProject.id,
+                threadId: sessionId,
+                messages: [],
+                governorState: EMPTY_GOVERNOR_STATE,
+                loading: false,
+                loadErrors: [
+                  {
+                    turnIndex: null,
+                    message: error instanceof Error ? error.message : String(error),
+                  },
+                ],
+              });
             }
           }
 
@@ -83,6 +102,7 @@ export function useTabsPersistence({
                 ...prev.filter((t) => t.id !== PLACEHOLDER_TAB_ID),
                 ...loadedTabs,
               ]);
+              for (const { tab, calls } of recoveries) void recoverTab(tab, calls);
             }
             const targetActive =
               state?.activeTabId && loadedTabs.some((t) => t.id === state.activeTabId)
@@ -94,22 +114,20 @@ export function useTabsPersistence({
         }
 
         const initialId = `session-${Date.now()}`;
+        const settings = await fetchSessionSettingsApi(activeProject.path, initialId);
         const initialTab: TabData = {
           id: initialId,
           title: "Chat 1",
           projectId: activeProject.id,
           threadId: initialId,
           messages: [],
-          enabledTools: INITIAL_TOOLS,
           governorState: {
             intent_stack: [],
             completed_intents: [],
-            global_constraints: [],
+            false_completions: [],
           },
           loading: false,
-          selectedModel: DEFAULT_MODEL_ID,
-          thinkingLevel: "Low",
-          executionMode: "manual",
+          ...settingsToTab(settings),
         };
 
         if (!isCancelled) {
@@ -130,10 +148,6 @@ export function useTabsPersistence({
           closed: false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          model: initialTab.selectedModel,
-          thinkingLevel: initialTab.thinkingLevel,
-          executionMode: initialTab.executionMode,
-          enabledTools: initialTab.enabledTools,
         });
 
         void saveWorkspaceStateApi(activeProject.path, {
@@ -154,7 +168,23 @@ export function useTabsPersistence({
     return () => {
       isCancelled = true;
     };
-  }, [activeProject?.id, activeProject?.path, tabsRef, setTabs, setActiveTabId]);
+  }, [activeProject?.id, activeProject?.path, tabsRef, setTabs, setActiveTabId, recoverTab]);
+
+  const applySettings = useCallback(
+    async (tabId: string, pending: Promise<Settings>) => {
+      try {
+        const tabSettings = settingsToTab(await pending);
+        setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, ...tabSettings } : t)));
+      } catch (error) {
+        console.error("[TabsPersistence] Failed to apply session settings:", error);
+        globalThis.alert(
+          "Failed to apply session settings: " +
+            (error instanceof Error ? error.message : String(error))
+        );
+      }
+    },
+    [setTabs]
+  );
 
   const persistNewTab = useCallback(
     (newTab: TabData, nextTabs: TabData[]) => {
@@ -165,18 +195,15 @@ export function useTabsPersistence({
         closed: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        model: newTab.selectedModel,
-        thinkingLevel: newTab.thinkingLevel,
-        executionMode: newTab.executionMode,
-        enabledTools: newTab.enabledTools,
       });
+      void applySettings(newTab.id, fetchSessionSettingsApi(activeProject.path, newTab.id));
 
       void saveWorkspaceStateApi(activeProject.path, {
         activeTabId: newTab.id,
         openTabIds: nextTabs.map((t) => t.id),
       });
     },
-    [activeProject]
+    [activeProject, applySettings]
   );
 
   const persistCloseTab = useCallback(
@@ -209,28 +236,18 @@ export function useTabsPersistence({
     [activeProject]
   );
 
-  const persistTabMetadata = useCallback(
-    (tab: TabData) => {
+  const persistTabSettings = useCallback(
+    (tabId: string, patch: SettingsPatch) => {
       if (!activeProject?.path) return;
-      void saveSessionMetadataApi(activeProject.path, {
-        sessionId: tab.id,
-        title: tab.title,
-        closed: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        model: tab.selectedModel,
-        thinkingLevel: tab.thinkingLevel,
-        executionMode: tab.executionMode,
-        enabledTools: tab.enabledTools,
-      });
+      void applySettings(tabId, updateSessionSettingsApi(activeProject.path, tabId, patch));
     },
-    [activeProject]
+    [activeProject, applySettings]
   );
 
   return {
     persistNewTab,
     persistCloseTab,
     persistTabSwitch,
-    persistTabMetadata,
+    persistTabSettings,
   };
 }

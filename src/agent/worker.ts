@@ -7,6 +7,12 @@ import { createAgentTools } from "../core/tools";
 import { logConversation } from "../core/telemetry/logger";
 import { findApiKey } from "../common/env";
 import { join, dirname } from "../core/paths";
+import {
+  readContextFile,
+  readOptionalContextFile,
+  userConfigDir,
+  type LoadedFile,
+} from "../core/contextFiles";
 
 export interface WorkerAgentOptions {
   runtime: Runtime;
@@ -19,38 +25,51 @@ export interface WorkerAgentOptions {
 
 const AGENT_FILES = ["AGENTS.md", "CLAUDE.md"];
 
-async function loadWorkerTemplate(runtime: Runtime): Promise<string> {
-  try {
-    const resourcePath = await runtime.paths.resource("app-data/prompts/worker.md");
-    return await runtime.fs.readText(resourcePath);
-  } catch {
-    return "You are an expert software engineer with access to local tools. Inspect the codebase, read relevant files, and fulfill user requests directly.";
-  }
+const FALLBACK_TEMPLATE =
+  "You are an expert software engineer with access to local tools. Inspect the codebase, read relevant files, and fulfill user requests directly.";
+
+export interface WorkerPrompt {
+  prompt: string;
+  files: LoadedFile[];
 }
 
-async function loadAgentFiles(runtime: Runtime, workspaceDir: string): Promise<string[]> {
-  const sections: string[] = [];
-  let dir = await runtime.paths.resolve(workspaceDir);
+async function loadAgentFiles(runtime: Runtime, workspaceDir: string): Promise<LoadedFile[]> {
+  const workspace = await runtime.paths.resolve(workspaceDir);
+  const files: LoadedFile[] = [];
+  let dir = workspace;
   while (true) {
-    const found: string[] = [];
+    const found: LoadedFile[] = [];
     for (const name of AGENT_FILES) {
       const path = join(dir, name);
-      if (await runtime.fs.exists(path))
-        found.push(`# ${path}\n\n${await runtime.fs.readText(path)}`);
+      if (dir === workspace) found.push(await readOptionalContextFile(runtime, path));
+      else if (await runtime.fs.exists(path)) found.push(await readContextFile(runtime, path));
     }
-    sections.unshift(...found);
+    files.unshift(...found);
     const parent = dirname(dir);
-    if (parent === dir) return sections;
+    if (parent === dir) break;
     dir = parent;
   }
+  const userDir = await userConfigDir(runtime);
+  const userFiles = await Promise.all(
+    AGENT_FILES.map((name) => readOptionalContextFile(runtime, join(userDir, name)))
+  );
+  return [...userFiles, ...files];
 }
 
-export async function loadWorkerPrompt(runtime: Runtime, workspaceDir: string): Promise<string> {
+export async function loadWorkerPrompt(
+  runtime: Runtime,
+  workspaceDir: string
+): Promise<WorkerPrompt> {
+  const templatePath = await runtime.paths.resource("app-data/prompts/worker.md");
   const [template, agentFiles] = await Promise.all([
-    loadWorkerTemplate(runtime),
+    readContextFile(runtime, templatePath),
     loadAgentFiles(runtime, workspaceDir),
   ]);
-  return [template, ...agentFiles].join("\n\n");
+  const prompt = [
+    template.missing ? FALLBACK_TEMPLATE : template.text,
+    ...agentFiles.filter((file) => !file.missing).map((file) => `# ${file.path}\n\n${file.text}`),
+  ].join("\n\n");
+  return { prompt, files: [template, ...agentFiles] };
 }
 
 export async function createWorkerAgent(options: WorkerAgentOptions) {
@@ -61,7 +80,10 @@ export async function createWorkerAgent(options: WorkerAgentOptions) {
   const { runtime } = options;
   const workspaceDir = options.workspaceDir || ".";
   const enableTools = options.enableTools ?? true;
-  const systemPrompt = options.systemPrompt ?? (await loadWorkerPrompt(runtime, workspaceDir));
+  const workerPrompt = options.systemPrompt
+    ? undefined
+    : await loadWorkerPrompt(runtime, workspaceDir);
+  const systemPrompt = options.systemPrompt ?? workerPrompt?.prompt ?? "";
 
   const systemMessage = {
     role: "system",
@@ -121,5 +143,3 @@ export async function createWorkerAgent(options: WorkerAgentOptions) {
     },
   };
 }
-
-export type WorkerAgent = ReturnType<typeof createWorkerAgent>;

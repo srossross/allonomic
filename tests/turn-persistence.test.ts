@@ -5,9 +5,9 @@ import { createMemoryRuntime } from "../src/adapters/memory/runtime";
 import { saveTurn, saveTurnError, turnDirFor } from "../src/core/telemetry/session";
 import { resumeFromDir } from "../src/core/telemetry/sessionReplay";
 import { rehydrateSession } from "../src/core/session/rehydration";
-import { loadTurn } from "../src/core/turn/turnFiles";
+import { loadTurn, loadSessionTurns } from "../src/core/turn/turnFiles";
+import { loadSessionMetadata, saveSessionMetadata } from "../src/core/session/metadata";
 import { createTurnEventLog } from "../src/core/turn/eventLog";
-import { createPendingResult } from "../src/core/userPrompt";
 
 const WORKSPACE = "/w";
 const SESSION = "s1";
@@ -22,7 +22,13 @@ function newTurnEvents(turnIndex: number) {
     interceptor: "Governor",
     action: {
       type: "push_intent",
-      intent: { id: "itnt_new", kind: "request", description: "list", constraints: [] },
+      intent: {
+        id: "itnt_new",
+        kind: "request",
+        description: "list",
+        completed_when: null,
+        changelog: [],
+      },
     },
   });
   sink.emit({
@@ -69,7 +75,7 @@ async function writeLegacyTurn(fs: ReturnType<typeof createMemoryRuntime>["fs"])
         {
           type: "tool",
           name: "run_mutating_command",
-          content: createPendingResult({ kind: "confirm", label: "rm x" }),
+          content: "removed x",
           tool_call_id: "c1",
         },
       ],
@@ -156,7 +162,7 @@ describe("turn persistence", () => {
       "user",
       "assistant",
     ]);
-    expect(session.messages[1].toolCalls?.[0]).toMatchObject({ id: "c1", status: "pending" });
+    expect(session.messages[1].toolCalls?.[0]).toMatchObject({ id: "c1", status: "executed" });
     expect(session.messages.at(-1)?.content).toBe("Error: Recursion limit");
     expect(session.governorState.intent_stack.map((i) => i.id)).toEqual(["itnt_old"]);
     expect(session.governorState.completed_intents.map((i) => i.id)).toEqual(["itnt_new"]);
@@ -165,6 +171,31 @@ describe("turn persistence", () => {
     const replay = await resumeFromDir(fs, SESSION_DIR);
     expect(replay.governorState).toEqual(session.governorState);
     expect(replay.nextTurnIndex).toBe(4);
+  });
+
+  it("reports an unparseable turn as a load error and still loads the rest", async () => {
+    const { fs } = createMemoryRuntime();
+    for (const turnIndex of [1, 2]) {
+      await saveTurn(fs, SESSION_DIR, {
+        turnIndex,
+        userPrompt: "list files",
+        agentResponse: "a.txt",
+        agentMessages: [],
+        events: newTurnEvents(turnIndex),
+      });
+    }
+    await fs.writeText(
+      `${turnDirFor(SESSION_DIR, 1)}/events.yml`,
+      YAML.stringify([
+        { type: "governor_action", phase: "entry", action: { type: "add_false_completion" } },
+      ])
+    );
+
+    const session = await rehydrateSession(fs, WORKSPACE, SESSION);
+    expect(session.loadErrors).toHaveLength(1);
+    expect(session.loadErrors[0].turnIndex).toBe(1);
+    expect(session.messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
+    expect(session.nextTurnIndex).toBe(3);
   });
 
   it("resumeFromDir forks turns into a new directory", async () => {
@@ -188,6 +219,58 @@ describe("turn persistence", () => {
     expect(fork.messages.map((m) => m._getType())).toEqual(["human", "ai"]);
     expect(await fs.exists(`${turnDirFor("/w/fork", 1)}/events.yml`)).toBe(true);
     expect(await fs.exists(turnDirFor("/w/fork", 2))).toBe(false);
+  });
+
+  it("resumeFromDir copies metadata.yml into the fork", async () => {
+    const { fs } = createMemoryRuntime();
+    await saveTurn(fs, SESSION_DIR, {
+      turnIndex: 1,
+      userPrompt: "list files",
+      agentResponse: "a.txt",
+      agentMessages: [],
+      events: newTurnEvents(1),
+    });
+    await saveSessionMetadata(fs, WORKSPACE, {
+      sessionId: SESSION,
+      title: "original",
+      closed: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastPrompt: "hello",
+    });
+    await resumeFromDir(fs, SESSION_DIR, `${WORKSPACE}/.allonomic/sessions/fork`);
+    const forked = await loadSessionMetadata(fs, WORKSPACE, "fork");
+    expect(forked).toMatchObject({ sessionId: "fork", title: "original", lastPrompt: "hello" });
+  });
+
+  it("keeps the legacy slice point across an events.yml turn", async () => {
+    const { fs } = createMemoryRuntime();
+    await fs.writeText(
+      `${turnDirFor(SESSION_DIR, 1)}/agent.yml`,
+      YAML.stringify({ final_response: "one", messages: [{ type: "ai", content: "one" }] })
+    );
+    await saveTurn(fs, SESSION_DIR, {
+      turnIndex: 2,
+      userPrompt: "list files",
+      agentResponse: "a.txt",
+      agentMessages: [],
+      events: newTurnEvents(2),
+    });
+    await fs.writeText(
+      `${turnDirFor(SESSION_DIR, 3)}/agent.yml`,
+      YAML.stringify({
+        final_response: "three",
+        messages: [
+          { type: "ai", content: "one" },
+          { type: "ai", content: "three" },
+        ],
+      })
+    );
+    const { events } = await loadSessionTurns(fs, SESSION_DIR, (_, error) => {
+      throw error;
+    });
+    const turn3Steps = events.filter((e) => e.turnIndex === 3 && e.type === "model_step");
+    expect(turn3Steps.map((e) => (e.type === "model_step" ? e.content : ""))).toEqual(["three"]);
   });
 
   it("slices legacy agent.yml whole-thread history to the turn", async () => {

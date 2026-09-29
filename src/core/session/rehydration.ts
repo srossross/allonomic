@@ -5,12 +5,12 @@
  */
 import type { FileStore } from "../ports";
 import { join } from "../paths";
-import { DEFAULT_MODEL_ID } from "../../types/chat";
-import { INITIAL_TOOLS } from "../../types/tab";
-import type { RehydratedSession, SessionMetadata } from "../../types/persistence";
+import type { RehydratedSession, SessionLoadError, SessionMetadata } from "../../types/persistence";
 import { loadSessionMetadata, saveSessionMetadata } from "./metadata";
 import { loadSessionTurns, nextTurnIndexAfter } from "../turn/turnFiles";
 import { foldTurnEvents } from "../turn/transcript";
+import type { RecoverableCall, TurnEvent } from "../turn/events";
+import { saveTurnEvents } from "../telemetry/session";
 
 async function loadOrCreateMetadata(
   fs: FileStore,
@@ -25,18 +25,50 @@ async function loadOrCreateMetadata(
     closed: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    model: DEFAULT_MODEL_ID,
-    thinkingLevel: "Low",
-    enabledTools: INITIAL_TOOLS,
   };
   await saveSessionMetadata(fs, workspaceDir, metadata);
   return metadata;
 }
 
-function reportTurnError(turnIndex: number, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Failed to load turn ${turnIndex} during rehydration:`, error);
-  globalThis.alert(`Failed to load turn ${turnIndex} during rehydration: ${message}`);
+function isTerminal(event: TurnEvent): boolean {
+  return event.type === "turn_completed" || event.type === "turn_failed";
+}
+
+async function closeUnfinishedTurn(
+  fs: FileStore,
+  sessionDir: string,
+  turnNumbers: number[],
+  events: TurnEvent[]
+): Promise<TurnEvent | undefined> {
+  const lastTurn = turnNumbers.at(-1);
+  const turnEvents = events.filter((e) => e.turnIndex === lastTurn);
+  if (lastTurn === undefined || turnEvents.length === 0 || turnEvents.some((e) => isTerminal(e)))
+    return;
+  const failed: TurnEvent = {
+    type: "turn_failed",
+    error: "The app shut down during this turn",
+    aborted: false,
+    seq: (turnEvents.at(-1)?.seq ?? -1) + 1,
+    at: new Date().toISOString(),
+    turnIndex: lastTurn,
+  };
+  await saveTurnEvents(fs, sessionDir, lastTurn, [...turnEvents, failed]);
+  return failed;
+}
+
+function findUnansweredCalls(events: TurnEvent[]): RecoverableCall[] {
+  const answered = new Set(events.flatMap((e) => (e.type === "tool_result" ? [e.toolCallId] : [])));
+  const decidedBy = (id: string) =>
+    events.flatMap((e) =>
+      e.type === "governor_tool_decision" && e.toolCallId === id ? [e.interceptor] : []
+    );
+  return events.flatMap((e) =>
+    e.type === "model_step"
+      ? e.toolCalls
+          .filter((call) => !answered.has(call.id))
+          .map((call) => ({ ...call, decidedBy: decidedBy(call.id) }))
+      : []
+  );
 }
 
 export async function rehydrateSession(
@@ -46,6 +78,21 @@ export async function rehydrateSession(
 ): Promise<RehydratedSession> {
   const sessionDir = join(workspaceDir, ".allonomic/sessions", sessionId);
   const metadata = await loadOrCreateMetadata(fs, workspaceDir, sessionId);
-  const { turnNumbers, events } = await loadSessionTurns(fs, sessionDir, reportTurnError);
-  return { metadata, ...foldTurnEvents(events), nextTurnIndex: nextTurnIndexAfter(turnNumbers) };
+  const loadErrors: SessionLoadError[] = [];
+  const { turnNumbers, events } = await loadSessionTurns(fs, sessionDir, (turnIndex, error) => {
+    console.error(`Failed to load turn ${turnIndex} during rehydration:`, error);
+    loadErrors.push({
+      turnIndex,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  });
+  const closed = await closeUnfinishedTurn(fs, sessionDir, turnNumbers, events);
+  const allEvents = closed ? [...events, closed] : events;
+  return {
+    metadata,
+    ...foldTurnEvents(allEvents),
+    nextTurnIndex: nextTurnIndexAfter(turnNumbers),
+    loadErrors,
+    unansweredCalls: findUnansweredCalls(allEvents),
+  };
 }

@@ -1,0 +1,21 @@
+final_response: "Waiting for user: gh pr view 27 --comments"
+messages:
+  - type: ai
+    content:
+      - type: functionCall
+        functionCall:
+          name: run_native_read_only_command
+          args: &a1
+            command: gh pr view 27 --comments
+          id: call_119357
+    tool_calls:
+      - type: tool_call
+        id: call_119357
+        name: run_native_read_only_command
+        args: *a1
+  - type: tool
+    name: run_native_read_only_command
+    content: '{"pending":true,"v":1,"prompt":{"kind":"confirm","label":"gh pr view
+      27 --comments"}}'
+    tool_call_id: call_119357
+timestamp: 2026-09-28T01:07:50.931Z

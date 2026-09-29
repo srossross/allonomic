@@ -4,9 +4,14 @@ import YAML from "yaml";
 import { getAppConfigDir } from "./configPaths";
 import type { WorkspacesConfig, WorkspaceItem } from "../types/persistence";
 
-export async function getWorkspacesFilePath(): Promise<string> {
+async function getWorkspacesFilePath(): Promise<string> {
   const configDir = await getAppConfigDir();
   return await join(configDir, "workspaces.yml");
+}
+
+function readLastOpened(entry: object): string | undefined {
+  const value = Reflect.get(entry, "last_opened") || Reflect.get(entry, "lastOpened");
+  return typeof value === "string" ? value : undefined;
 }
 
 export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
@@ -39,8 +44,8 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
               id: resolvedPath, // Upgrade id to path
               name,
               path: resolvedPath,
-              lastOpened: Reflect.get(w, "last_opened") || Reflect.get(w, "lastOpened"),
-              archived: Reflect.get(w, "archived"),
+              lastOpened: readLastOpened(w),
+              archived: Reflect.get(w, "archived") === true,
             });
           }
         } else {
@@ -57,8 +62,8 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
               path: resolvedPath,
               name:
                 typeof name === "string" ? name : resolvedPath.split(/[/\\]/).pop() || resolvedPath,
-              lastOpened: Reflect.get(val, "last_opened") || Reflect.get(val, "lastOpened"),
-              archived: Reflect.get(val, "archived"),
+              lastOpened: readLastOpened(val),
+              archived: Reflect.get(val, "archived") === true,
             });
           }
         }
@@ -70,7 +75,7 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
             // We can't map it easily since legacy format didn't have path in active_workspace_id.
             // But if we upgraded it, we might just default to the first one.
             const legacyItem = validWorkspaces.find(
-              (w) => w.id === activeWorkspaceId || w.path.includes(activeWorkspaceId)
+              (w) => w.id === activeWorkspaceId || w.path === activeWorkspaceId
             );
             resolvedActiveId = legacyItem ? legacyItem.path : validWorkspaces[0].path;
           }
@@ -113,7 +118,7 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
   return initialConfig;
 }
 
-export async function saveWorkspacesConfig(config: WorkspacesConfig): Promise<void> {
+async function saveWorkspacesConfig(config: WorkspacesConfig): Promise<void> {
   const filePath = await getWorkspacesFilePath();
   const dir = await dirname(filePath);
   await mkdir(dir, { recursive: true });

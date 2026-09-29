@@ -57,6 +57,17 @@ async function writeEvents(fs: FileStore, turnDir: string, events: TurnEvent[]) 
   await fs.writeText(join(turnDir, TURN_EVENTS_FILE), YAML.stringify({ version: 1, events }));
 }
 
+export async function saveTurnEvents(
+  fs: FileStore,
+  sessionDir: string,
+  turnIndex: number,
+  events: TurnEvent[]
+): Promise<void> {
+  const turnDir = turnDirFor(sessionDir, turnIndex);
+  await fs.mkdir(turnDir);
+  await writeEvents(fs, turnDir, events);
+}
+
 export async function saveTurn(fs: FileStore, sessionDir: string, data: TurnData): Promise<string> {
   const turnDir = turnDirFor(sessionDir, data.turnIndex);
   await fs.mkdir(turnDir);
@@ -145,5 +156,3 @@ export async function saveTurnError(
 
   return turnDir;
 }
-
-export { resumeFromDir, type ResumeResult } from "./sessionReplay";

@@ -1,61 +1,68 @@
 import type { Runtime } from "../ports";
 import type { GovernorState, UserIntent } from "./types";
-import type { ToolCall } from "../graph/types";
+import { readContextFile, type LoadedFile } from "../contextFiles";
 
-export async function loadPromptFile(runtime: Runtime, filename: string): Promise<string> {
-  try {
-    const resourcePath = await runtime.paths.resource(`app-data/prompts/governor/${filename}`);
-    return await runtime.fs.readText(resourcePath);
-  } catch (error) {
-    console.warn(`Failed to read prompt ${filename}:`, error);
-    return "";
-  }
+export async function loadPromptFile(
+  runtime: Runtime,
+  filename: string,
+  directory = "governor"
+): Promise<LoadedFile> {
+  const path = await runtime.paths.resource(`app-data/prompts/${directory}/${filename}`);
+  return readContextFile(runtime, path);
 }
 
-function baseConstraintsSection(constraintsContent: string | null): string {
-  return constraintsContent
-    ? `\n## Base Project Constraints (from agents/CONSTRAINTS.md)\n${constraintsContent}\n`
-    : "";
+export interface PromptSection {
+  title: string;
+  body: string;
 }
-
-const FORK_PREAMBLE = `---
-STOP. You are no longer the assistant above. Everything above is the worker agent's conversation, shown to you for review.
-You are the Governor. Act ONLY through the Governor tools available to you now.
----`;
 
 export function buildInterceptorInstructions(
+  preamble: string,
   template: string,
-  state: GovernorState,
-  constraintsContent: string | null
+  intentStack: UserIntent[],
+  sections: PromptSection[]
 ): string {
-  return `${FORK_PREAMBLE}
+  return `${preamble.trim()}
 
 ${template}
 
 ## Active Intent Stack
-${JSON.stringify(state.intent_stack, null, 2)}
-
-## Global Constraints
-${JSON.stringify(state.global_constraints)}
-${baseConstraintsSection(constraintsContent)}`;
+${JSON.stringify(intentStack, null, 2)}
+${sections.map(({ title, body }) => `\n## ${title}\n${body}\n`).join("")}`;
 }
 
-export function describeToolCall(toolCall: ToolCall): string {
-  return `${toolCall.id ?? "(no id)"} ${toolCall.name}(${JSON.stringify(toolCall.args)})`;
+export interface IntentBriefChanges {
+  added: UserIntent[];
+  changed: UserIntent[];
+  dropped: UserIntent[];
 }
 
-export function buildDenyMessage(
-  intent: UserIntent | undefined,
-  toolCall: ToolCall,
-  reason: string
-): string {
-  const interpreted = intent ? `"${intent.description}" (${intent.kind})` : "(no active intent)";
-  return `We have interpreted the user intent as ${interpreted} and tool call ${describeToolCall(toolCall)} does not look like it is heading in the direction of satisfying the intent. Reason: ${reason}`;
+function intentBlock(intent: UserIntent, state: GovernorState, isChanged: boolean): string {
+  const directives = state.false_completions
+    .filter((fc) => fc.intent_id === intent.id && fc.resolution === null && fc.directive)
+    .map((fc) => `  * ${fc.directive}`);
+  return [
+    `Goal: ${intent.description}`,
+    isChanged && intent.changelog.length > 0 && `Changed: ${intent.changelog.at(-1)}`,
+    intent.completed_when && `Done when: ${intent.completed_when}`,
+    directives.length > 0 && `To accomplish this, consider:\n${directives.join("\n")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-export function buildRejectionContext(
-  state: GovernorState,
-  constraintsContent: string | null
-): string {
-  return `\n\nActive Intents: ${JSON.stringify(state.intent_stack)}\nConstraints: ${JSON.stringify(state.global_constraints)}\n${constraintsContent ? `Base Constraints:\n${constraintsContent}` : ""}`;
+export function buildIntentBrief(
+  { added, changed, dropped }: IntentBriefChanges,
+  state: GovernorState
+): string | undefined {
+  const blocks = [
+    ...added.map((intent) => intentBlock(intent, state, false)),
+    ...changed.map((intent) => intentBlock(intent, state, true)),
+    ...dropped.map((intent) => `No longer needed: ${intent.description}`),
+  ];
+  return blocks.length > 0 ? blocks.join("\n\n") : undefined;
+}
+
+export function buildRejectionContext(state: GovernorState): string {
+  return `\n\nActive Intents: ${JSON.stringify(state.intent_stack)}\n`;
 }

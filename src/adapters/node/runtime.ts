@@ -1,7 +1,10 @@
 import * as nodeFs from "node:fs/promises";
 import nodePath from "node:path";
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
 import type { FileStore, Shell, Paths, Runtime } from "@/core/ports";
+
+const APP_IDENTIFIER = "com.sean.allonomic";
 
 const fs: FileStore = {
   readText: (path) => nodeFs.readFile(path, "utf8"),
@@ -45,6 +48,14 @@ export function createNodeRuntime(projectRoot: string = process.cwd()): Runtime 
   const paths: Paths = {
     resolve: async (...parts) => nodePath.resolve(...parts),
     resource: async (relativePath) => nodePath.resolve(projectRoot, relativePath),
+    home: async () => homedir(),
+    appConfig: async () =>
+      process.platform === "darwin"
+        ? nodePath.join(homedir(), "Library", "Application Support", APP_IDENTIFIER)
+        : nodePath.join(
+            process.env.XDG_CONFIG_HOME ?? nodePath.join(homedir(), ".config"),
+            APP_IDENTIFIER
+          ),
   };
   return { platform: process.platform, fs, shell, paths };
 }

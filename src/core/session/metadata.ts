@@ -2,23 +2,9 @@ import YAML from "yaml";
 import type { FileStore } from "../ports";
 import { join, dirname } from "../paths";
 import type { SessionMetadata } from "../../types/persistence";
-import { type ThinkingLevel, DEFAULT_MODEL_ID } from "../../types/chat";
-import { INITIAL_TOOLS } from "../../types/tab";
 
-export function getSessionMetadataPath(workspaceDir: string, sessionId: string): string {
+function getSessionMetadataPath(workspaceDir: string, sessionId: string): string {
   return join(workspaceDir, ".allonomic", "sessions", sessionId, "metadata.yml");
-}
-
-const THINKING_LEVEL_SET = new Set(["Off", "Low", "Medium", "High"]);
-
-function isThinkingLevel(val: unknown): val is ThinkingLevel {
-  return typeof val === "string" && THINKING_LEVEL_SET.has(val);
-}
-
-function toStringArray(val: unknown): string[] {
-  return Array.isArray(val)
-    ? val.filter((item): item is string => typeof item === "string")
-    : INITIAL_TOOLS;
 }
 
 export async function loadSessionMetadata(
@@ -40,16 +26,13 @@ export async function loadSessionMetadata(
     const createdAt = Reflect.get(data, "createdAt");
     const updated_at = Reflect.get(data, "updated_at");
     const updatedAt = Reflect.get(data, "updatedAt");
-    const model = Reflect.get(data, "model");
-    const thinking_level = Reflect.get(data, "thinking_level");
-    const enabled_tools = Reflect.get(data, "enabled_tools");
     const turn_count = Reflect.get(data, "turn_count");
     const last_prompt = Reflect.get(data, "last_prompt");
 
     return {
       sessionId: String(session_id || sessionIdField || sessionId),
       title: typeof title === "string" ? title : "Chat",
-      closed: Boolean(closed ?? false),
+      closed: closed === true,
       createdAt:
         typeof created_at === "string"
           ? created_at
@@ -62,9 +45,6 @@ export async function loadSessionMetadata(
           : typeof updatedAt === "string"
             ? updatedAt
             : new Date().toISOString(),
-      model: typeof model === "string" ? model : DEFAULT_MODEL_ID,
-      thinkingLevel: isThinkingLevel(thinking_level) ? thinking_level : "Low",
-      enabledTools: toStringArray(enabled_tools),
       turnCount: typeof turn_count === "number" ? turn_count : undefined,
       lastPrompt: typeof last_prompt === "string" ? last_prompt : undefined,
     };
@@ -76,7 +56,7 @@ export async function loadSessionMetadata(
       !errorMsg.includes("system cannot find the path")
     ) {
       console.error("[SessionMetadata] Error loading session metadata:", error);
-      globalThis.alert("Failed to parse session metadata: " + errorMsg);
+      globalThis.alert?.("Failed to parse session metadata: " + errorMsg);
     }
     return null;
   }
@@ -90,15 +70,16 @@ export async function saveSessionMetadata(
   const filePath = getSessionMetadataPath(workspaceDir, metadata.sessionId);
   await fs.mkdir(dirname(filePath));
 
+  const existing: unknown = (await fs.exists(filePath))
+    ? YAML.parse(await fs.readText(filePath))
+    : undefined;
   const yml = YAML.stringify({
+    ...(typeof existing === "object" && existing),
     session_id: metadata.sessionId,
     title: metadata.title,
     closed: metadata.closed,
     created_at: metadata.createdAt,
     updated_at: metadata.updatedAt || new Date().toISOString(),
-    model: metadata.model || DEFAULT_MODEL_ID,
-    thinking_level: metadata.thinkingLevel || "Low",
-    enabled_tools: metadata.enabledTools || INITIAL_TOOLS,
     turn_count: metadata.turnCount ?? 0,
     last_prompt: metadata.lastPrompt || "",
   });
@@ -144,7 +125,7 @@ export async function listSessions(
       !errorMsg.includes("system cannot find the path")
     ) {
       console.error("[SessionMetadata] Error listing sessions:", error);
-      globalThis.alert("Failed to list sessions: " + errorMsg);
+      globalThis.alert?.("Failed to list sessions: " + errorMsg);
     }
     return [];
   }

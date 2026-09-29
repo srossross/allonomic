@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { UserPrompt, UserPromptValue } from "@/types";
+import type { ExecutionMode, UserPrompt, UserPromptValue } from "@/types";
+import { MODE_STYLES } from "./modeStyles";
 
 interface PromptSurfaceProps {
   prompt: UserPrompt;
@@ -7,7 +8,7 @@ interface PromptSurfaceProps {
 }
 
 const kbdClass =
-  "border-border/60 bg-muted/60 text-current rounded border px-1 py-0.5 font-mono text-[10px] font-semibold";
+  "border-border/60 bg-muted/60 text-current rounded border px-1 py-0.5 font-mono text-2xs font-semibold";
 
 export function PromptSurface({ prompt, onRespond }: PromptSurfaceProps) {
   switch (prompt.kind) {
@@ -37,6 +38,7 @@ function ConfirmPrompt({
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter") {
+      if (e.target !== e.currentTarget) return;
       e.preventDefault();
       onRespond(true);
     } else if (e.key === "Escape") {
@@ -52,9 +54,15 @@ function ConfirmPrompt({
       onKeyDown={onKeyDown}
       className="flex flex-col gap-2 px-1.5 py-1 text-xs select-none focus:outline-none"
     >
+      {prompt.mode && prompt.currentMode && (
+        <div className="text-foreground text-sm font-medium">
+          Needs <span className={MODE_STYLES[prompt.mode].label}>{prompt.mode}</span> mode to run
+          without a prompt (currently{" "}
+          <span className={MODE_STYLES[prompt.currentMode].label}>{prompt.currentMode}</span>)
+        </div>
+      )}
       <div className="flex items-baseline gap-2">
-        <span className="text-amber-400">▶</span>
-        <span className="text-foreground font-mono font-semibold">{prompt.label}</span>
+        <span className="text-foreground font-mono font-semibold break-all">{prompt.label}</span>
         {prompt.detail && <span className="text-muted-foreground">{prompt.detail}</span>}
       </div>
       <div className="flex items-center justify-end gap-1.5">
@@ -76,6 +84,18 @@ function ConfirmPrompt({
         </button>
       </div>
     </div>
+  );
+}
+
+function ModeLabel({ label, mode }: { label: string; mode?: ExecutionMode }) {
+  const index = mode ? label.lastIndexOf(mode) : -1;
+  if (!mode || index === -1) return label;
+  return (
+    <>
+      {label.slice(0, index)}
+      <span className={MODE_STYLES[mode].label}>{mode}</span>
+      {label.slice(index + mode.length)}
+    </>
   );
 }
 
@@ -106,6 +126,7 @@ function ChoicePrompt({
         break;
       }
       case "Enter": {
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
         onRespond(prompt.options[index].value);
         break;
@@ -128,7 +149,12 @@ function ChoicePrompt({
       onKeyDown={onKeyDown}
       className="flex flex-col gap-1.5 px-1.5 py-1 text-xs select-none focus:outline-none"
     >
-      <div className="text-foreground font-medium">{prompt.label}</div>
+      <div className="text-foreground text-sm font-medium">
+        <ModeLabel label={prompt.label} mode={prompt.mode} />
+      </div>
+      {prompt.detail && (
+        <div className="text-muted-foreground whitespace-pre-wrap">{prompt.detail}</div>
+      )}
       <div className="flex flex-col">
         {prompt.options.map((o, i) => (
           <button
@@ -140,12 +166,12 @@ function ChoicePrompt({
               i === index ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50"
             }`}
           >
-            <span className="font-mono text-[10px] opacity-60">{i + 1}</span>
+            <span className="text-2xs font-mono opacity-60">{i + 1}</span>
             <span>{o.label}</span>
           </button>
         ))}
       </div>
-      <div className="text-muted-foreground flex justify-end gap-1 text-[10px]">
+      <div className="text-muted-foreground text-2xs flex justify-end gap-1">
         <kbd className={kbdClass}>↑↓</kbd>
         <kbd className={kbdClass}>↵</kbd>
       </div>

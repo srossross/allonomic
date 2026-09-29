@@ -1,56 +1,45 @@
-import type { UserIntent } from "@/core/governor/types";
+import type { UserIntent, FalseCompletion } from "@/core/governor/types";
 import { IntentRow } from "./IntentRow";
+import { FalseCompletionRow } from "./FalseCompletionRow";
 
 interface IntentsTabProperties {
   intentStack: UserIntent[];
   completedIntents: UserIntent[];
-  reframedMap: Record<string, string>;
-  expandedKeys: Set<string>;
-  onToggleExpand: (key: string) => void;
+  falseCompletions: FalseCompletion[];
+  onSelect: (intentId: string, falseCompletionId?: string) => void;
 }
 
 export function IntentsTab({
   intentStack,
   completedIntents,
-  reframedMap,
-  expandedKeys,
-  onToggleExpand,
+  falseCompletions,
+  onSelect,
 }: IntentsTabProperties) {
   if (intentStack.length === 0 && completedIntents.length === 0) {
     return <div className="text-muted-foreground p-3 text-xs">No active or completed intents.</div>;
   }
 
+  const rows = [
+    ...intentStack.toReversed().map((intent) => ({ intent, isDone: false })),
+    ...completedIntents.toReversed().map((intent) => ({ intent, isDone: true })),
+  ];
+
   return (
     <div className="space-y-0.5">
-      {intentStack.toReversed().map((intent, index) => {
-        const key = intent.id || intent.description;
-        const displayText = reframedMap[key] || intent.description;
-        return (
-          <IntentRow
-            key={key || `active-${index}`}
-            intent={intent}
-            isDone={false}
-            displayText={displayText}
-            isExpanded={expandedKeys.has(key)}
-            onToggle={() => onToggleExpand(key)}
-          />
-        );
-      })}
-
-      {completedIntents.toReversed().map((intent, index) => {
-        const key = intent.id || intent.description;
-        const displayText = reframedMap[key] || intent.description;
-        return (
-          <IntentRow
-            key={key || `done-${index}`}
-            intent={intent}
-            isDone={true}
-            displayText={displayText}
-            isExpanded={expandedKeys.has(key)}
-            onToggle={() => onToggleExpand(key)}
-          />
-        );
-      })}
+      {rows.map(({ intent, isDone }, index) => (
+        <div key={intent.id || `${isDone ? "done" : "active"}-${index}`}>
+          <IntentRow intent={intent} isDone={isDone} onSelect={() => onSelect(intent.id)} />
+          {falseCompletions
+            .filter((falseCompletion) => falseCompletion.intent_id === intent.id)
+            .map((falseCompletion) => (
+              <FalseCompletionRow
+                key={falseCompletion.id}
+                falseCompletion={falseCompletion}
+                onSelect={() => onSelect(intent.id, falseCompletion.id)}
+              />
+            ))}
+        </div>
+      ))}
     </div>
   );
 }

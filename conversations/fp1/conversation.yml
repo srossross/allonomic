@@ -1,0 +1,4 @@
+# Seed: turns/ from duckdb-driver session-1790557517889 with every false-completion action and
+# false_completion.md fork removed. Turn 008 was truncated after the worker's final response so
+# the governor exit runs fresh with an empty false completion list.
+start_at: exit

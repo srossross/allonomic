@@ -6,12 +6,21 @@ import {
   type Project,
   AVAILABLE_MODES,
   INITIAL_TOOLS,
-  THINKING_BUDGETS,
-  DEFAULT_MODEL_ID,
+  DEFAULT_EXECUTION_MODE,
+  DEFAULT_GOVERNOR_MODE,
+  GOVERNOR_MODES,
   createInitialTab,
   createNewTab,
 } from "@/types";
-import { runAgentPromptApi, stopAgentPromptApi } from "@/agent/api";
+import {
+  fetchSessionSettingsApi,
+  recoverSessionApi,
+  runAgentPromptApi,
+  stopAgentPromptApi,
+} from "@/agent/api";
+import { settingsToTab } from "./tabSettings";
+import type { InterceptorSettings, SettingsPatch } from "@/core/config/settings";
+import type { RecoverableCall } from "@/core/turn/events";
 import { buildHistory } from "@/core/history";
 import { useTabsPersistence } from "./useTabsPersistence";
 import { useTurnDispatch } from "./useTurnDispatch";
@@ -33,12 +42,41 @@ export function useTabsManager(activeProject: Project) {
 
   const runTurn = useTurnDispatch(setTabs, activeTabIdRef);
 
-  const { persistNewTab, persistCloseTab, persistTabSwitch, persistTabMetadata } =
+  const projectPath = activeProject?.path;
+  const refreshTabSettings = useCallback(
+    async (tabId: string) => {
+      if (!projectPath) return;
+      const tabSettings = settingsToTab(await fetchSessionSettingsApi(projectPath, tabId));
+      setTabs((previous) => previous.map((t) => (t.id === tabId ? { ...t, ...tabSettings } : t)));
+    },
+    [projectPath]
+  );
+
+  const recoverTab = useCallback(
+    async (tab: TabData, calls: RecoverableCall[]) => {
+      setTabs((previous) => previous.map((t) => (t.id === tab.id ? { ...t, loading: true } : t)));
+      await runTurn(tab.id, (onEvent) =>
+        recoverSessionApi({
+          threadId: tab.threadId,
+          sessionId: tab.id,
+          workspaceDir: projectPath,
+          history: buildHistory(tab.messages),
+          calls,
+          onEvent,
+        })
+      );
+      await refreshTabSettings(tab.id);
+    },
+    [runTurn, projectPath, refreshTabSettings]
+  );
+
+  const { persistNewTab, persistCloseTab, persistTabSwitch, persistTabSettings } =
     useTabsPersistence({
       activeProject,
       tabsRef,
       setTabs,
       setActiveTabId,
+      recoverTab,
     });
 
   const activeProjectTabs = tabs.filter((t) => t.projectId === activeProject?.id);
@@ -96,40 +134,50 @@ export function useTabsManager(activeProject: Project) {
   );
 
   const updateActiveTab = useCallback(
-    (updater: (tab: TabData) => TabData) => {
-      setTabs((previous) =>
-        previous.map((t) => {
-          if (t.id !== activeTab.id) return t;
-          const updated = updater(t);
-          persistTabMetadata(updated);
-          return updated;
-        })
-      );
-    },
-    [activeTab.id, persistTabMetadata]
+    (patch: SettingsPatch) => persistTabSettings(activeTab.id, patch),
+    [activeTab.id, persistTabSettings]
   );
 
   const handleSelectModel = useCallback(
-    (modelId: string) => updateActiveTab((t) => ({ ...t, selectedModel: modelId })),
+    (modelId: string) => updateActiveTab({ model: modelId }),
     [updateActiveTab]
   );
   const handleSelectThinkingLevel = useCallback(
-    (level: ThinkingLevel) => updateActiveTab((t) => ({ ...t, thinkingLevel: level })),
+    (level: ThinkingLevel) => updateActiveTab({ thinkingLevel: level }),
     [updateActiveTab]
   );
   const handleSelectExecutionMode = useCallback(
-    (mode: ExecutionMode) => updateActiveTab((t) => ({ ...t, executionMode: mode })),
+    (mode: ExecutionMode) => updateActiveTab({ executionMode: mode }),
     [updateActiveTab]
   );
 
+  const handleToggleHasNetworkAccess = useCallback(
+    () => updateActiveTab({ networkAccess: !activeTab.hasNetworkAccess }),
+    [updateActiveTab, activeTab.hasNetworkAccess]
+  );
+
+  const handleToggleTeacher = useCallback(
+    () => updateActiveTab({ teacherEnabled: !(activeTab.teacherEnabled ?? true) }),
+    [updateActiveTab, activeTab.teacherEnabled]
+  );
+
+  const handleSetInterceptorSettings = useCallback(
+    (name: string, settings: InterceptorSettings) =>
+      updateActiveTab({ interceptors: { [name]: settings } }),
+    [updateActiveTab]
+  );
+
+  const handleCycleGovernorMode = useCallback(() => {
+    const currentIndex = GOVERNOR_MODES.indexOf(activeTab.governorMode ?? DEFAULT_GOVERNOR_MODE);
+    updateActiveTab({ governorMode: GOVERNOR_MODES[(currentIndex + 1) % GOVERNOR_MODES.length] });
+  }, [updateActiveTab, activeTab.governorMode]);
+
   const handleCycleExecutionMode = useCallback(() => {
-    updateActiveTab((t) => {
-      const current = t.executionMode || "manual";
-      const currentIndex = AVAILABLE_MODES.findIndex((m) => m.id === current);
-      const nextIndex = (currentIndex + 1) % AVAILABLE_MODES.length;
-      return { ...t, executionMode: AVAILABLE_MODES[nextIndex].id };
-    });
-  }, [updateActiveTab]);
+    const current = activeTab.executionMode || DEFAULT_EXECUTION_MODE;
+    const currentIndex = AVAILABLE_MODES.findIndex((m) => m.id === current);
+    const nextIndex = (currentIndex + 1) % AVAILABLE_MODES.length;
+    updateActiveTab({ executionMode: AVAILABLE_MODES[nextIndex].id });
+  }, [updateActiveTab, activeTab.executionMode]);
 
   const handleStopMessage = useCallback(async () => {
     const currentTabId = activeTab.id;
@@ -138,16 +186,18 @@ export function useTabsManager(activeProject: Project) {
       controller.abort();
       abortControllersReference.current.delete(currentTabId);
     }
-    await stopAgentPromptApi(activeTab.threadId, currentTabId);
-    setTabs((previous) =>
-      previous.map((t) => (t.id === currentTabId ? { ...t, loading: false } : t))
-    );
+    try {
+      await stopAgentPromptApi(activeTab.threadId, currentTabId);
+    } finally {
+      setTabs((previous) =>
+        previous.map((t) => (t.id === currentTabId ? { ...t, loading: false } : t))
+      );
+    }
   }, [activeTab.id, activeTab.threadId]);
 
   const handleSendMessage = useCallback(
     async (text: string) => {
       const tab = activeTab;
-      const thinkingLevel = tab.thinkingLevel || "High";
       setTabs((previous) => previous.map((t) => (t.id === tab.id ? { ...t, loading: true } : t)));
 
       const controller = new AbortController();
@@ -162,19 +212,14 @@ export function useTabsManager(activeProject: Project) {
             history: buildHistory(tab.messages),
             signal: controller.signal,
             onEvent,
-            config: {
-              enabledTools: tab.enabledTools || INITIAL_TOOLS,
-              modelName: tab.selectedModel || DEFAULT_MODEL_ID,
-              thinkingBudget: THINKING_BUDGETS[thinkingLevel] ?? 8192,
-              executionMode: tab.executionMode || "manual",
-            },
           })
         );
       } finally {
         abortControllersReference.current.delete(tab.id);
       }
+      await refreshTabSettings(tab.id);
     },
-    [activeTab, activeProject, runTurn]
+    [activeTab, activeProject, runTurn, refreshTabSettings]
   );
 
   const handleClearConsole = useCallback(
@@ -197,20 +242,17 @@ export function useTabsManager(activeProject: Project) {
 
   const handleToggleTool = useCallback(
     (toolName: string) => {
-      updateActiveTab((t) => {
-        const current = t.enabledTools || INITIAL_TOOLS;
-        const next = current.includes(toolName)
-          ? current.filter((n) => n !== toolName)
-          : [...current, toolName];
-        return { ...t, enabledTools: next };
-      });
+      const current = activeTab.enabledTools || INITIAL_TOOLS;
+      updateActiveTab({ tools: { [toolName]: !current.includes(toolName) } });
     },
-    [updateActiveTab]
+    [updateActiveTab, activeTab.enabledTools]
   );
 
   const handleSetAllTools = useCallback(
     (isEnabled: boolean) =>
-      updateActiveTab((t) => ({ ...t, enabledTools: isEnabled ? INITIAL_TOOLS : [] })),
+      updateActiveTab({
+        tools: Object.fromEntries(INITIAL_TOOLS.map((name) => [name, isEnabled])),
+      }),
     [updateActiveTab]
   );
 
@@ -226,6 +268,10 @@ export function useTabsManager(activeProject: Project) {
     handleSelectThinkingLevel,
     handleSelectExecutionMode,
     handleCycleExecutionMode,
+    handleToggleHasNetworkAccess,
+    handleToggleTeacher,
+    handleSetInterceptorSettings,
+    handleCycleGovernorMode,
     handleSendMessage,
     handleStopMessage,
     handleClearConsole,

@@ -1,0 +1,251 @@
+final_response: "Waiting for user: git log -n 5 --oneline"
+messages:
+  - type: human
+    content: evaluate and verify the comments
+  - type: ai
+    content:
+      - type: functionCall
+        functionCall:
+          name: read_file
+          args: &a1
+            endLine: 390
+            startLine: 290
+            filePath: src/bridge/duckdb_source.cpp
+          id: call_60979
+    tool_calls:
+      - type: tool_call
+        id: call_60979
+        name: read_file
+        args: *a1
+  - type: tool
+    name: read_file
+    content: >-
+
+      unique_ptr<ParsedExpression> GuardWithCheck(unique_ptr<ParsedExpression>
+      check, unique_ptr<ParsedExpression> value) {
+      	vector<unique_ptr<ParsedExpression>> error_args;
+      	error_args.push_back(
+      	    make_uniq<ConstantExpression>(Value("virtual_catalog_bridge: row violates the check predicate on this table")));
+      	auto guard = make_uniq<CaseExpression>();
+      	CaseCheck branch;
+      	branch.when_expr = std::move(check);
+      	branch.then_expr = std::move(value);
+      	guard->case_checks.push_back(std::move(branch));
+      	guard->else_expr = make_uniq<FunctionExpression>("error", std::move(error_args));
+      	return std::move(guard);
+      }
+
+
+      unique_ptr<ParsedExpression> UsingFor(GrantBook &grants, const string
+      &schema, const string &table, CrossingVerb verb) {
+      	lock_guard<mutex> guard(grants.lock);
+      	auto schema_it = grants.tables.find(schema);
+      	if (schema_it == grants.tables.end()) {
+      		return nullptr;
+      	}
+      	auto table_it = schema_it->second.find(table);
+      	return table_it == schema_it->second.end() ? nullptr : table_it->second.CopyUsing(verb);
+      }
+
+
+      unique_ptr<ParsedExpression> CheckFor(GrantBook &grants, const string
+      &schema, const string &table, CrossingVerb verb) {
+      	lock_guard<mutex> guard(grants.lock);
+      	auto schema_it = grants.tables.find(schema);
+      	if (schema_it == grants.tables.end()) {
+      		return nullptr;
+      	}
+      	auto table_it = schema_it->second.find(table);
+      	return table_it == schema_it->second.end() ? nullptr : table_it->second.CopyCheck(verb);
+      }
+
+
+      unique_ptr<ParsedExpression> And(unique_ptr<ParsedExpression> left,
+      unique_ptr<ParsedExpression> right) {
+      	if (!left) {
+      		return right;
+      	}
+      	return make_uniq_base<ParsedExpression, ConjunctionExpression>(ExpressionType::CONJUNCTION_AND, std::move(left),
+      	                                                               std::move(right));
+      }
+
+
+      //! Stands the table behind its select policy: a floor with a policy binds
+      to
+
+      //! `SELECT <columns> FROM catalog.schema.table WHERE <using>`, one
+      without binds to the table.
+
+      CrossingFloorResolver PolicyResolver(const shared_ptr<GrantBook> &grants,
+      const string &source_catalog) {
+      	return [grants, source_catalog](const CrossingFloor &floor) -> unique_ptr<TableRef> {
+      		auto using_predicate = UsingFor(*grants, floor.schema, floor.table, CrossingVerb::SELECT);
+      		if (!using_predicate) {
+      			return nullptr;
+      		}
+      		auto table_ref = make_uniq<BaseTableRef>();
+      		table_ref->catalog_name = source_catalog;
+      		table_ref->schema_name = floor.schema;
+      		table_ref->table_name = floor.table;
+      		auto node = make_uniq<SelectNode>();
+      		for (auto &column : floor.column_names) {
+      			node->select_list.push_back(make_uniq<ColumnRefExpression>(column, floor.table));
+      		}
+      		node->from_table = std::move(table_ref);
+      		node->where_clause = std::move(using_predicate);
+      		auto select = make_uniq<SelectStatement>();
+      		select->node = std::move(node);
+      		return make_uniq<SubqueryRef>(std::move(select), floor.table);
+      	};
+      }
+
+
+      //! Grafts the write policies onto the statement crossing built: the using
+      predicate narrows which
+
+      //! rows an update or delete touches, the check guards the first written
+      value with error() so a
+
+      //! violating row fails the statement.
+
+      CrossingWriteShaper PolicyShaper(const shared_ptr<GrantBook> &grants,
+      const CrossingWriteTarget &target) {
+      	return [grants, target](CrossingWriteStatement &built) {
+      		auto using_predicate = UsingFor(*grants, target.schema, target.table, target.verb);
+      		auto check = CheckFor(*grants, target.schema, target.table, target.verb);
+      		switch (target.verb) {
+      		case CrossingVerb::INSERT: {
+      			if (!check) {
+      				return;
+      			}
+      			auto &select = built.statement->Cast<InsertStatement>().select_statement->node->Cast<SelectNode>();
+      			PointCheckAtUpdatedRow(check, target.table, target.set_columns, built, 0);
+      			select.select_list[0] = GuardWithCheck(std::move(check), std::move(select.select_list[0]));
+      			return;
+      		}
+      		case CrossingVerb::UPDATE: {
+      			auto &set_info = *built.statement->Cast<UpdateStatement>().set_info;
+      			if (using_predicate) {
+      				QualifyColumns(using_predicate, target.table, built);
+      				set_info.condition = And(std::move(set_info.condition), std::move(using_predicate));
+      			}
+      			if (check) {
+      				PointCheckAtUpdatedRow(check, target.table, target.set_columns, built, target.key_columns.size());
+      				set_info.expressions[0] = GuardWithCheck(std::move(check), std::move(set_info.expressions[0]));
+      			}
+      			return;
+      		}
+      		case CrossingVerb::DELETE_: {
+      			auto &statement = built.statement->Cast<DeleteStatement>();
+      			if (using_predicate) {
+      				QualifyColumns(using_predicate, target.table, built);
+      				statement.condition = And(std::move(statement.condition), std::move(using_predicate));
+      			}
+    tool_call_id: call_60979
+  - type: ai
+    content:
+      - type: functionCall
+        functionCall:
+          name: read_file
+          args: &a2
+            filePath: src/bridge/duckdb_source.cpp
+            endLine: 290
+            startLine: 230
+          id: call_103407
+    tool_calls:
+      - type: tool_call
+        id: call_103407
+        name: read_file
+        args: *a2
+  - type: tool
+    name: read_file
+    content: >
+      		                  "source: %s",
+      		                  clause, text, ex.what());
+      	}
+      	auto &columns = probe->Columns();
+      	if (columns.size() != 1) {
+      		throw IOException("virtual_catalog_bridge: the %s predicate '%s' must be a single expression", clause, text);
+      	}
+      	if (columns[0].Type().id() != LogicalTypeId::BOOLEAN) {
+      		throw IOException("virtual_catalog_bridge: the %s predicate '%s' must be BOOLEAN, but it is %s", clause, text,
+      		                  columns[0].Type().ToString());
+      	}
+      	return expr;
+      }
+
+
+      vector<string> DiscoverKeyColumns(TableCatalogEntry &table) {
+      	vector<string> key;
+      	for (auto &constraint : table.GetConstraints()) {
+      		if (constraint->type != ConstraintType::UNIQUE) {
+      			continue;
+      		}
+      		auto &unique = constraint->Cast<UniqueConstraint>();
+      		if (!unique.IsPrimaryKey()) {
+      			continue;
+      		}
+      		if (unique.HasIndex()) {
+      			key.push_back(table.GetColumns().GetColumn(unique.GetIndex()).GetName());
+      		} else {
+      			key = unique.GetColumnNames();
+      		}
+      		break;
+      	}
+      	return key;
+      }
+
+
+      //! Rewrites every unqualified column reference in `expr`, the root
+      included: a set column becomes
+
+      //! its seam column (the value being written), anything else is pinned to
+      the target table.
+
+      void PointCheckAtUpdatedRow(unique_ptr<ParsedExpression> &expr, const
+      string &table, const vector<string> &set_columns,
+                                  const CrossingWriteStatement &built, idx_t key_count) {
+      	if (expr->GetExpressionClass() == ExpressionClass::COLUMN_REF) {
+      		auto &column_ref = expr->Cast<ColumnRefExpression>();
+      		if (!column_ref.IsQualified()) {
+      			auto &name = column_ref.GetColumnName();
+      			for (idx_t c = 0; c < set_columns.size(); c++) {
+      				if (StringUtil::CIEquals(set_columns[c], name)) {
+      					expr = make_uniq<ColumnRefExpression>(built.seam_columns[key_count + c], built.seam_alias);
+      					return;
+      				}
+      			}
+      			expr = make_uniq<ColumnRefExpression>(name, table);
+      		}
+      		return;
+      	}
+      	ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) {
+      		PointCheckAtUpdatedRow(child, table, set_columns, built, key_count);
+      	});
+      }
+
+
+      void QualifyColumns(unique_ptr<ParsedExpression> &expr, const string
+      &table, const CrossingWriteStatement &built) {
+      	PointCheckAtUpdatedRow(expr, table, {}, built, 0);
+      }
+    tool_call_id: call_103407
+  - type: ai
+    content:
+      - type: functionCall
+        functionCall:
+          name: run_native_read_only_command
+          args: &a3
+            command: git log -n 5 --oneline
+          id: call_77269
+    tool_calls:
+      - type: tool_call
+        id: call_77269
+        name: run_native_read_only_command
+        args: *a3
+  - type: tool
+    name: run_native_read_only_command
+    content: '{"pending":true,"v":1,"prompt":{"kind":"confirm","label":"git log -n 5
+      --oneline"}}'
+    tool_call_id: call_77269
+timestamp: 2026-09-27T15:12:54.103Z

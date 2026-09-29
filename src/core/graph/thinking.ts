@@ -1,14 +1,13 @@
 import type { BaseMessage } from "@langchain/core/messages";
-import { decodeToolResult } from "../userPrompt";
 
-export interface PartLike {
+interface PartLike {
   type?: string;
   thought?: boolean;
   text?: string;
   thinking?: string;
 }
 
-export function isPartLike(value: unknown): value is PartLike {
+function isPartLike(value: unknown): value is PartLike {
   return typeof value === "object" && value !== null;
 }
 
@@ -72,14 +71,8 @@ export function extractFinalResponse(messages: BaseMessage[]): {
   let thinking = "";
 
   const lastMessage = messages.at(-1);
-  if (lastMessage && lastMessage.content) {
-    const type = lastMessage._getType();
-    if (type === "ai") {
-      response = messageText(lastMessage.content);
-    } else if (type === "tool") {
-      const decoded = decodeToolResult(lastMessage.content);
-      if (decoded.status === "pending") response = `Waiting for user: ${decoded.prompt.label}`;
-    }
+  if (lastMessage && lastMessage.content && lastMessage._getType() === "ai") {
+    response = messageText(lastMessage.content);
   }
 
   // Only extract thinking from the current turn (messages after the last user/human prompt)
@@ -127,6 +120,25 @@ export function sanitizeMessagesForModel(messages: BaseMessage[]): BaseMessage[]
     const clone = Object.create(Object.getPrototypeOf(message));
     return Object.assign(clone, message, { content: newContent });
   });
+}
+
+const THOUGHT_SIGNATURES_KEY = "__gemini_function_call_thought_signatures__";
+const SKIP_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
+
+export function thoughtSignatureFor(message: BaseMessage, callId: string): string | undefined {
+  const signatures: unknown = message.additional_kwargs?.[THOUGHT_SIGNATURES_KEY];
+  const signature: unknown = isPartLike(signatures) ? Reflect.get(signatures, callId) : undefined;
+  return typeof signature === "string" ? signature : undefined;
+}
+
+export function thoughtSignatureKwargs(
+  calls: { id: string; thoughtSignature?: string }[]
+): Record<string, Record<string, string>> {
+  return {
+    [THOUGHT_SIGNATURES_KEY]: Object.fromEntries(
+      calls.map((c) => [c.id, c.thoughtSignature ?? SKIP_THOUGHT_SIGNATURE])
+    ),
+  };
 }
 
 export function thinkingConfigFor(

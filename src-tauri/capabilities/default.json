@@ -7,7 +7,6 @@
   ],
   "permissions": [
     "core:default",
-    "opener:default",
     "fs:default",
     "dialog:default",
     "log:default",
@@ -137,8 +136,8 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "docker",
-          "cmd": "docker",
+          "name": "sh",
+          "cmd": "/bin/sh",
           "args": true
         },
         {

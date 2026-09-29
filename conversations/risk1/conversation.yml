@@ -1,0 +1,9 @@
+# Seed: turns/ holds the recorded history the worker and governor see.
+# The harness replays it, then runs `prompt` as the next turn.
+prompt: evaluate and verify the comments
+
+# Abort the turn as soon as an event matching every listed field is emitted.
+stop_after:
+  type: governor_fork
+  pass: false_completion.md
+  phase: entry

@@ -1,0 +1,84 @@
+final_response: >-
+  Both comments were **valid**, and both have **already been resolved** in
+  commit `24a4099`:
+
+
+  ---
+
+
+  ### 1. Bare boolean check expression rewrite
+
+  - **Comment:** `PointCheckAtUpdatedRow` only visited child expressions via
+  `EnumerateChildren`, so a root column ref like `WITH CHECK (enabled)` was
+  never rewritten into its seam column.
+
+  - **Evaluation:**
+    - **Accurate:** Previously, `PointCheckAtUpdatedRow` took `ParsedExpression &expr` and only enumerated children (`EnumerateChildren(expr, ...)`), leaving a root `ColumnRefExpression` untouched.
+    - **Resolution:** In commit `24a4099`, `PointCheckAtUpdatedRow` signature was changed to `unique_ptr<ParsedExpression> &expr`. It now checks `if (expr->GetExpressionClass() == ExpressionClass::COLUMN_REF)` directly at the root before recursing on children.
+    - **Test coverage:** Added `test_insert_check_on_a_bare_column` and `test_update_check_on_a_bare_column_reads_the_new_value` in `test/python/bridge/test_plan.py`.
+
+  ---
+
+
+  ### 2. Ambiguity with seam columns (`c0`, `c1`, ...) in `UPDATE`/`DELETE`
+  `USING` predicates
+
+  - **Comment:** The UPDATE and DELETE `USING` predicates were appended
+  unqualified (`set_info.condition = And(..., using_predicate)`). If the target
+  table contained a column named `c0`, `c1`, etc., referencing it would collide
+  with the `crossing_seam` columns during binding.
+
+  - **Evaluation:**
+    - **Accurate:** The generated UPDATE/DELETE statement joins the target table with `crossing_seam (c0, c1, ...)`. An unqualified column name like `c0` in the `USING` clause became ambiguous between `target_table.c0` and `crossing_seam.c0`.
+    - **Resolution:** In commit `24a4099`, `QualifyColumns` was introduced:
+      ```cpp
+      void QualifyColumns(unique_ptr<ParsedExpression> &expr, const string &table, const CrossingWriteStatement &built) {
+          PointCheckAtUpdatedRow(expr, table, {}, built, 0);
+      }
+      ```
+      This qualifies all table column references with `target.table` before appending `using_predicate` to `set_info.condition` in `UPDATE` and `statement.condition` in `DELETE_`.
+    - **Test coverage:** Added `test_update_using_on_a_column_named_like_a_seam_column` and `test_delete_using_on_a_column_named_like_a_seam_column` in `test/python/bridge/test_plan.py`.
+messages:
+  - type: ai
+    content: >-
+      Both comments were **valid**, and both have **already been resolved** in
+      commit `24a4099`:
+
+
+      ---
+
+
+      ### 1. Bare boolean check expression rewrite
+
+      - **Comment:** `PointCheckAtUpdatedRow` only visited child expressions via
+      `EnumerateChildren`, so a root column ref like `WITH CHECK (enabled)` was
+      never rewritten into its seam column.
+
+      - **Evaluation:**
+        - **Accurate:** Previously, `PointCheckAtUpdatedRow` took `ParsedExpression &expr` and only enumerated children (`EnumerateChildren(expr, ...)`), leaving a root `ColumnRefExpression` untouched.
+        - **Resolution:** In commit `24a4099`, `PointCheckAtUpdatedRow` signature was changed to `unique_ptr<ParsedExpression> &expr`. It now checks `if (expr->GetExpressionClass() == ExpressionClass::COLUMN_REF)` directly at the root before recursing on children.
+        - **Test coverage:** Added `test_insert_check_on_a_bare_column` and `test_update_check_on_a_bare_column_reads_the_new_value` in `test/python/bridge/test_plan.py`.
+
+      ---
+
+
+      ### 2. Ambiguity with seam columns (`c0`, `c1`, ...) in `UPDATE`/`DELETE`
+      `USING` predicates
+
+      - **Comment:** The UPDATE and DELETE `USING` predicates were appended
+      unqualified (`set_info.condition = And(..., using_predicate)`). If the
+      target table contained a column named `c0`, `c1`, etc., referencing it
+      would collide with the `crossing_seam` columns during binding.
+
+      - **Evaluation:**
+        - **Accurate:** The generated UPDATE/DELETE statement joins the target table with `crossing_seam (c0, c1, ...)`. An unqualified column name like `c0` in the `USING` clause became ambiguous between `target_table.c0` and `crossing_seam.c0`.
+        - **Resolution:** In commit `24a4099`, `QualifyColumns` was introduced:
+          ```cpp
+          void QualifyColumns(unique_ptr<ParsedExpression> &expr, const string &table, const CrossingWriteStatement &built) {
+              PointCheckAtUpdatedRow(expr, table, {}, built, 0);
+          }
+          ```
+          This qualifies all table column references with `target.table` before appending `using_predicate` to `set_info.condition` in `UPDATE` and `statement.condition` in `DELETE_`.
+        - **Test coverage:** Added `test_update_using_on_a_column_named_like_a_seam_column` and `test_delete_using_on_a_column_named_like_a_seam_column` in `test/python/bridge/test_plan.py`.
+    tool_calls: []
+timestamp: 2026-09-27T15:13:44.382Z

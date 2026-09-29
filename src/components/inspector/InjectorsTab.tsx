@@ -1,38 +1,49 @@
-import type { InjectorMeta } from "@/types";
+import type { InterceptorInfo } from "@/core/graph/types";
+import type { InterceptorSettings } from "@/core/config/settings";
+import type { ModelOption } from "@/types";
 import { InjectorRow } from "./InjectorRow";
 
 interface InjectorsTabProperties {
-  injectors: InjectorMeta[];
-  expandedInjectorIds: Set<string>;
-  onToggleExpand: (id: string) => void;
+  interceptors: InterceptorInfo[];
+  expandedNames: Set<string>;
+  onToggleExpand: (name: string) => void;
+  models: ModelOption[];
+  settings: Record<string, InterceptorSettings>;
+  onSetSettings?: (name: string, settings: InterceptorSettings) => void;
 }
 
 export function InjectorsTab({
-  injectors,
-  expandedInjectorIds,
+  interceptors,
+  expandedNames,
   onToggleExpand,
+  models,
+  settings,
+  onSetSettings,
 }: InjectorsTabProperties) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1 text-xs">
-        <span className="text-muted-foreground font-mono text-[10px] font-semibold tracking-wider uppercase">
-          Installed Injectors ({injectors.length})
+        <span className="text-muted-foreground text-2xs font-mono font-semibold tracking-wider uppercase">
+          Interceptors ({interceptors.length})
         </span>
-        <span className="font-mono text-[10px] font-medium text-emerald-500">
-          {injectors.filter((index) => index.status === "active").length} active
+        <span className="text-2xs font-mono font-medium text-emerald-500">
+          {interceptors.filter((interceptor) => interceptor.isEnabled).length} active
         </span>
       </div>
 
-      {injectors.length === 0 ? (
-        <div className="text-muted-foreground p-3 font-mono text-xs">No injectors installed.</div>
+      {interceptors.length === 0 ? (
+        <div className="text-muted-foreground p-3 font-mono text-xs">No interceptors.</div>
       ) : (
         <div className="space-y-1">
-          {injectors.map((injector) => (
+          {interceptors.map((interceptor) => (
             <InjectorRow
-              key={injector.id}
-              injector={injector}
-              isExpanded={expandedInjectorIds.has(injector.id)}
-              onToggleExpand={() => onToggleExpand(injector.id)}
+              key={interceptor.name}
+              interceptor={interceptor}
+              isExpanded={expandedNames.has(interceptor.name)}
+              onToggleExpand={() => onToggleExpand(interceptor.name)}
+              models={models}
+              settings={settings[interceptor.name] ?? {}}
+              onSetSettings={onSetSettings && ((next) => onSetSettings(interceptor.name, next))}
             />
           ))}
         </div>

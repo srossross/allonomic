@@ -3,7 +3,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 import type { FileStore } from "../ports";
 import { join } from "../paths";
 
-export interface LogEntry {
+interface LogEntry {
   id: string;
   timestamp: string;
   turns: Array<{

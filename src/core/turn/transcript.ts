@@ -1,23 +1,42 @@
-import type { ConsoleEvent, ContextMessage, Message, ToolCallInfo } from "../../types";
+import type {
+  AgentFileRow,
+  ConsoleEvent,
+  ContextMessage,
+  Message,
+  ToolCallInfo,
+} from "../../types";
 import type { GovernorState } from "../governor/types";
 import { applyGovernorAction, EMPTY_GOVERNOR_STATE } from "../governor/reducer";
 import { decodeToolResult } from "../userPrompt";
 import { projectConsoleEvents } from "./consoleProjection";
+import { applyAgentFiles } from "./agentFiles";
 import type { TurnEvent, TurnEventOf } from "./events";
+import { applyProfileEvent, EMPTY_PROFILE, type Profile } from "./profile";
 
 export interface Transcript {
   messages: Message[];
   contextMessages: ContextMessage[];
   consoleEvents: ConsoleEvent[];
+  agentFiles: AgentFileRow[];
   governorState: GovernorState;
+  contextTokens?: number;
+  waitingOn?: string;
+  profile: Profile;
 }
 
-export function emptyTranscript(): Transcript {
+function nextWaitingOn(current: string | undefined, event: TurnEvent): string | undefined {
+  if (event.type === "waiting") return event.on;
+  return event.type === "turn_completed" || event.type === "turn_failed" ? undefined : current;
+}
+
+function emptyTranscript(): Transcript {
   return {
     messages: [],
     contextMessages: [],
     consoleEvents: [],
+    agentFiles: [],
     governorState: EMPTY_GOVERNOR_STATE,
+    profile: EMPTY_PROFILE,
   };
 }
 
@@ -30,13 +49,26 @@ function upsertMessage(messages: Message[], message: Message): Message[] {
 
 function withToolResult(call: ToolCallInfo, content: string): ToolCallInfo {
   if (call.status === "blocked") return { ...call, result: content };
-  const decoded = decodeToolResult(content);
   return {
     ...call,
     result: content,
-    status: decoded.status,
-    prompt: decoded.status === "pending" ? decoded.prompt : undefined,
+    status: decodeToolResult(content).status,
+    prompt: undefined,
+    promptId: undefined,
   };
+}
+
+function updateMatchingToolCall(
+  messages: Message[],
+  isMatch: (call: ToolCallInfo) => boolean,
+  update: (call: ToolCallInfo) => ToolCallInfo
+): Message[] {
+  const index = messages.findLastIndex((m) => m.toolCalls?.some((c) => isMatch(c)));
+  return index === -1
+    ? messages
+    : messages.map((m, i) =>
+        i === index ? { ...m, toolCalls: m.toolCalls?.map((c) => (isMatch(c) ? update(c) : c)) } : m
+      );
 }
 
 function updateToolCall(
@@ -44,14 +76,7 @@ function updateToolCall(
   toolCallId: string,
   update: (call: ToolCallInfo) => ToolCallInfo
 ): Message[] {
-  const index = messages.findLastIndex((m) => m.toolCalls?.some((c) => c.id === toolCallId));
-  return index === -1
-    ? messages
-    : messages.map((m, i) =>
-        i === index
-          ? { ...m, toolCalls: m.toolCalls?.map((c) => (c.id === toolCallId ? update(c) : c)) }
-          : m
-      );
+  return updateMatchingToolCall(messages, (c) => c.id === toolCallId, update);
 }
 
 function stepMessage(event: TurnEventOf<"model_step">): Message {
@@ -66,7 +91,13 @@ function stepMessage(event: TurnEventOf<"model_step">): Message {
         : undefined,
     toolCalls:
       event.toolCalls.length > 0
-        ? event.toolCalls.map((c) => ({ id: c.id, name: c.name, args: c.args, status: "running" }))
+        ? event.toolCalls.map((c) => ({
+            id: c.id,
+            name: c.name,
+            args: c.args,
+            thoughtSignature: c.thoughtSignature,
+            status: "running",
+          }))
         : undefined,
   };
 }
@@ -87,6 +118,7 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
     case "model_step": {
       return {
         ...t,
+        contextTokens: event.inputTokens ?? t.contextTokens,
         messages: upsertMessage(t.messages, stepMessage(event)),
         contextMessages: [
           ...t.contextMessages,
@@ -111,6 +143,29 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
         ],
       };
     }
+    case "prompt_requested": {
+      const { toolCallId, prompt, promptId } = event;
+      if (!toolCallId) return t;
+      return {
+        ...t,
+        messages: updateToolCall(t.messages, toolCallId, (c) => ({
+          ...c,
+          status: "pending",
+          prompt,
+          promptId,
+        })),
+      };
+    }
+    case "prompt_answered": {
+      return {
+        ...t,
+        messages: updateMatchingToolCall(
+          t.messages,
+          (c) => c.promptId === event.promptId,
+          (c) => ({ ...c, status: "running", prompt: undefined, promptId: undefined })
+        ),
+      };
+    }
     case "governor_action": {
       return { ...t, governorState: applyGovernorAction(t.governorState, event.action).state };
     }
@@ -122,7 +177,24 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
           ...c,
           status: "blocked",
           reason: event.reason,
+          blockedBy: event.interceptor,
         })),
+      };
+    }
+    case "governor_brief": {
+      const content = `[${event.interceptor}]: ${event.text}`;
+      return {
+        ...t,
+        messages: [
+          ...t.messages,
+          {
+            id: `brief-${event.turnIndex}-${event.seq}`,
+            role: "user",
+            content,
+            brief: { interceptor: event.interceptor, text: event.text, doneWhen: event.doneWhen },
+          },
+        ],
+        contextMessages: [...t.contextMessages, { role: "human", content }],
       };
     }
     case "exit_retry": {
@@ -141,6 +213,7 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
             id: `error-${event.turnIndex}-${event.seq}`,
             role: "assistant",
             content: `Error: ${event.error}`,
+            isError: true,
           },
         ],
       };
@@ -153,7 +226,13 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
 
 export function applyTurnEvent(t: Transcript, event: TurnEvent): Transcript {
   const next = applyBody(t, event);
-  return { ...next, consoleEvents: [...next.consoleEvents, ...projectConsoleEvents(event)] };
+  return {
+    ...next,
+    consoleEvents: [...next.consoleEvents, ...projectConsoleEvents(event)],
+    agentFiles: applyAgentFiles(next.agentFiles, event),
+    waitingOn: nextWaitingOn(next.waitingOn, event),
+    profile: applyProfileEvent(next.profile, event),
+  };
 }
 
 export function foldTurnEvents(
