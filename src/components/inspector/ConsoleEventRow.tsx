@@ -33,7 +33,6 @@ function getBadgeStyle(variant: ConsoleBadgeVariant) {
 export function ConsoleEventRow({ event, isExpanded, onToggle }: ConsoleEventRowProperties) {
   return (
     <div className="flex flex-col overflow-hidden rounded-xs">
-      {/* Default: strictly ONE line */}
       <button
         type="button"
         onClick={onToggle}
@@ -63,7 +62,6 @@ export function ConsoleEventRow({ event, isExpanded, onToggle }: ConsoleEventRow
         />
       </button>
 
-      {/* Expanded payload / details drawer */}
       {isExpanded && event.details != null && (
         <div className="border-primary/40 bg-muted/25 mx-2 mt-0.5 mb-1.5 space-y-1.5 rounded-xs border-l-2 p-2 font-mono text-xs select-text">
           <div className="border-border/40 text-muted-foreground text-2xs flex items-center justify-between border-b pb-1">

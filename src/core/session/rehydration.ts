@@ -4,13 +4,15 @@
  * tool calls, and state transitions remain human-readable, auditable, and manually editable on disk.
  */
 import type { FileStore } from "../ports";
-import { join } from "../paths";
 import type { RehydratedSession, SessionLoadError, SessionMetadata } from "../../types/persistence";
-import { loadSessionMetadata, saveSessionMetadata } from "./metadata";
+import { loadSessionMetadata, saveSessionMetadata, sessionDirFor } from "./metadata";
 import { loadSessionTurns, nextTurnIndexAfter } from "../turn/turnFiles";
 import { foldTurnEvents } from "../turn/transcript";
 import type { RecoverableCall, TurnEvent } from "../turn/events";
 import { saveTurnEvents } from "../telemetry/session";
+import { createLogger } from "../log";
+
+const log = createLogger("session.rehydration");
 
 async function loadOrCreateMetadata(
   fs: FileStore,
@@ -52,6 +54,11 @@ async function closeUnfinishedTurn(
     at: new Date().toISOString(),
     turnIndex: lastTurn,
   };
+  const last = turnEvents.at(-1);
+  log.warn(
+    { sessionDir, turnIndex: lastTurn, lastEventType: last?.type, lastEventAt: last?.at },
+    "closing unfinished turn after shutdown"
+  );
   await saveTurnEvents(fs, sessionDir, lastTurn, [...turnEvents, failed]);
   return failed;
 }
@@ -76,11 +83,14 @@ export async function rehydrateSession(
   workspaceDir: string,
   sessionId: string
 ): Promise<RehydratedSession> {
-  const sessionDir = join(workspaceDir, ".allonomic/sessions", sessionId);
+  const sessionDir = sessionDirFor(workspaceDir, sessionId);
   const metadata = await loadOrCreateMetadata(fs, workspaceDir, sessionId);
   const loadErrors: SessionLoadError[] = [];
   const { turnNumbers, events } = await loadSessionTurns(fs, sessionDir, (turnIndex, error) => {
-    console.error(`Failed to load turn ${turnIndex} during rehydration:`, error);
+    log.error(
+      { turnIndex, error: error instanceof Error ? error.message : String(error) },
+      "turn load failed"
+    );
     loadErrors.push({
       turnIndex,
       message: error instanceof Error ? error.message : String(error),

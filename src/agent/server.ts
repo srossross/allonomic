@@ -7,11 +7,14 @@ import { GovernorInterceptor } from "../core/governor/interceptor";
 import { ToolTeacherInterceptor } from "../core/teacher/interceptor";
 import { describeInterceptor } from "../core/graph/interceptorHooks";
 import type { InterceptorInfo } from "../core/graph/types";
+import type { QueuedPrompt } from "../core/graph/turnControl";
 import { resumeFromDir } from "../core/telemetry/sessionReplay";
 import { loadSessionMetadata, saveSessionMetadata } from "../core/session/metadata";
 import { resolveSettings } from "../core/config/settings";
 import { loadModels } from "../core/models";
+import { generateChatTitle } from "../core/session/title";
 import {
+  DEFAULT_CHAT_TITLE,
   THINKING_BUDGETS,
   THINKING_LEVELS,
   type ThinkingLevel,
@@ -32,6 +35,7 @@ interface AgentInstance {
 }
 
 const runnersMap = new Map<string, AgentInstance>();
+const pendingInstances = new Map<string, Promise<AgentInstance>>();
 
 function getSessionKey(workspaceDir: string, sessionId: string): string {
   return `${workspaceDir}:::${sessionId}`;
@@ -39,16 +43,14 @@ function getSessionKey(workspaceDir: string, sessionId: string): string {
 
 async function replaySession(workspaceDir: string, sessionId: string) {
   try {
-    return await resumeFromDir(
-      tauriRuntime.fs,
-      join(workspaceDir, ".allonomic/sessions", sessionId)
-    );
+    return {
+      replay: await resumeFromDir(
+        tauriRuntime.fs,
+        join(workspaceDir, ".allonomic/sessions", sessionId)
+      ),
+    };
   } catch (error) {
-    serverLog.error("replay:failed", {
-      sessionId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return;
+    return { warnings: [{ source: "session replay (started fresh)", error }] };
   }
 }
 
@@ -60,7 +62,25 @@ async function getAgentInstance(workspaceDir?: string, sessionId?: string): Prom
   const existing = runnersMap.get(key);
   if (existing) return existing;
 
-  const replay = await replaySession(effectiveWorkspace, effectiveSessionId);
+  const pending = pendingInstances.get(key);
+  if (pending) return await pending;
+
+  const creating = createAgentInstance(effectiveWorkspace, effectiveSessionId);
+  pendingInstances.set(key, creating);
+  try {
+    const instance = await creating;
+    runnersMap.set(key, instance);
+    return instance;
+  } finally {
+    pendingInstances.delete(key);
+  }
+}
+
+async function createAgentInstance(
+  effectiveWorkspace: string,
+  effectiveSessionId: string
+): Promise<AgentInstance> {
+  const { replay, warnings } = await replaySession(effectiveWorkspace, effectiveSessionId);
   const governor = new GovernorInterceptor({
     runtime: tauriRuntime,
     initialState: replay?.governorState,
@@ -75,21 +95,20 @@ async function getAgentInstance(workspaceDir?: string, sessionId?: string): Prom
     sessionId: effectiveSessionId,
     initialTurnIndex: replay?.nextTurnIndex ?? 1,
     interceptors: [teacher, governor],
+    startupWarnings: warnings,
     executionMode: async () => {
       const settings = await resolveSettings(tauriRuntime, effectiveWorkspace, effectiveSessionId);
       return settings.executionMode;
     },
   });
 
-  const instance: AgentInstance = {
+  return {
     governor,
     teacher,
     runner,
     workspaceDir: effectiveWorkspace,
     sessionId: effectiveSessionId,
   };
-  runnersMap.set(key, instance);
-  return instance;
 }
 
 export interface AgentCallOptions {
@@ -102,6 +121,7 @@ export interface AgentCallOptions {
 
 export interface AgentTurnSummary {
   turnIndex: number;
+  title?: string;
 }
 
 async function prepareInstance(options: AgentCallOptions): Promise<AgentInstance> {
@@ -141,28 +161,21 @@ async function touchSessionMetadata(
   turnIndex: number,
   prompt: string | null
 ) {
-  try {
-    const existing = await loadSessionMetadata(
-      tauriRuntime.fs,
-      instance.workspaceDir,
-      instance.sessionId
-    );
-    const now = new Date().toISOString();
-    await saveSessionMetadata(tauriRuntime.fs, instance.workspaceDir, {
-      sessionId: instance.sessionId,
-      title: existing?.title || prompt?.slice(0, 30) || "Chat",
-      closed: existing?.closed ?? false,
-      createdAt: existing?.createdAt || now,
-      updatedAt: now,
-      turnCount: turnIndex,
-      lastPrompt: prompt ?? existing?.lastPrompt,
-    });
-  } catch (error) {
-    console.error(`[AgentServer] Failed to save session metadata:`, error);
-    globalThis.alert?.(
-      "Failed to save session metadata: " + (error instanceof Error ? error.message : String(error))
-    );
-  }
+  const existing = await loadSessionMetadata(
+    tauriRuntime.fs,
+    instance.workspaceDir,
+    instance.sessionId
+  );
+  const now = new Date().toISOString();
+  await saveSessionMetadata(tauriRuntime.fs, instance.workspaceDir, {
+    sessionId: instance.sessionId,
+    title: existing?.title || DEFAULT_CHAT_TITLE,
+    closed: existing?.closed ?? false,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    turnCount: turnIndex,
+    lastPrompt: prompt ?? existing?.lastPrompt,
+  });
 }
 
 export async function runAgentPrompt(
@@ -177,7 +190,28 @@ export async function runAgentPrompt(
     onEvent: options.onEvent,
   });
   await touchSessionMetadata(instance, turnIndex, prompt);
-  return { turnIndex };
+  return { turnIndex, title: await titleUntitledSession(instance, prompt) };
+}
+
+async function titleUntitledSession(
+  instance: AgentInstance,
+  prompt: string
+): Promise<string | undefined> {
+  const metadata = await loadSessionMetadata(
+    tauriRuntime.fs,
+    instance.workspaceDir,
+    instance.sessionId
+  );
+  if (!metadata || metadata.title !== DEFAULT_CHAT_TITLE) return undefined;
+  let title: string;
+  try {
+    title = await generateChatTitle(prompt);
+  } catch (error) {
+    serverLog.child({ sessionId: instance.sessionId }).warn({ error }, "title:failed");
+    return undefined;
+  }
+  await saveSessionMetadata(tauriRuntime.fs, instance.workspaceDir, { ...metadata, title });
+  return title;
 }
 
 export async function recoverAgentSession(
@@ -186,7 +220,9 @@ export async function recoverAgentSession(
   options: AgentCallOptions
 ): Promise<AgentTurnSummary> {
   const instance = await prepareInstance(options);
-  serverLog.info("recover:start", { threadId, sessionId: options.sessionId, calls: calls.length });
+  serverLog
+    .child({ sessionId: instance.sessionId })
+    .info({ threadId, calls: calls.length }, "recover:start");
   const { turnIndex } = await instance.runner.recover(threadId, calls, {
     history: options.history,
     signal: options.signal,
@@ -213,4 +249,31 @@ export async function stopAgentPrompt(threadId: string, sessionId?: string) {
     if (instance.runner.abort(threadId)) isStopped = true;
   }
   return isStopped;
+}
+
+function runnersFor(sessionId: string): AgentRunner[] {
+  const runners: AgentRunner[] = [];
+  for (const instance of runnersMap.values())
+    if (instance.sessionId === sessionId) runners.push(instance.runner);
+  return runners;
+}
+
+export function pauseAgent(threadId: string, sessionId: string): void {
+  for (const runner of runnersFor(sessionId)) runner.controls.pause(threadId);
+}
+
+export function resumeAgent(threadId: string, sessionId: string): void {
+  for (const runner of runnersFor(sessionId)) runner.controls.resume(threadId);
+}
+
+export function enqueueAgentPrompt(
+  threadId: string,
+  sessionId: string,
+  prompt: QueuedPrompt
+): void {
+  for (const runner of runnersFor(sessionId)) runner.controls.enqueue(threadId, prompt);
+}
+
+export function didDequeueAgentPrompt(threadId: string, sessionId: string, id: string): boolean {
+  return runnersFor(sessionId).some((runner) => runner.controls.dequeue(threadId, id));
 }

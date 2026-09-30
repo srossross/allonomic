@@ -23,6 +23,15 @@ export interface Shell {
   execute(program: string, args: string[]): Promise<ShellResult>;
 }
 
+export interface HttpResponse {
+  status: number;
+  body: string;
+}
+
+export interface Http {
+  post(url: string, json: unknown): Promise<HttpResponse>;
+}
+
 export interface Paths {
   resolve(...parts: string[]): Promise<string>;
   resource(relativePath: string): Promise<string>;
@@ -34,5 +43,6 @@ export interface Runtime {
   platform: string;
   fs: FileStore;
   shell: Shell;
+  http: Http;
   paths: Paths;
 }

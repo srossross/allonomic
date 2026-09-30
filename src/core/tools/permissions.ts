@@ -21,7 +21,7 @@ import { TOOL_SPECS } from "./specs";
 
 type PermissionInput = z.infer<typeof TOOL_SPECS.modifySandboxPermissions.schema>;
 
-const PATH_PREFIX = /^(\/|~|\$PROJECT|\$TMP)/;
+const PATH_PREFIX = /^(\/|~(?=\/|$)|\$PROJECT(?=\/|$)|\$TMP(?=\/|$))/;
 
 const SCOPE_LABELS: Record<PermissionScope, string> = {
   session: "this session",
@@ -90,7 +90,7 @@ export function createPermissionTools(
       mode,
       options: [
         { value: "deny", label: "Deny" },
-        { value: "session", label: "This session" },
+        ...(options.sessionId ? [{ value: "session", label: "This session" }] : []),
         { value: "project", label: "This project" },
         { value: "global", label: "Global" },
       ],

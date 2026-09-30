@@ -1,7 +1,4 @@
-import { createLogger } from "../log";
 import type { TurnEvent, TurnEventListener, TurnEventSink } from "./events";
-
-const log = createLogger("turn/eventLog");
 
 export interface TurnEventLog {
   sink: TurnEventSink;
@@ -22,16 +19,7 @@ export function createTurnEventLog(
         turnIndex,
       };
       events.push(event);
-      for (const listener of listeners) {
-        try {
-          listener(event);
-        } catch (error) {
-          log.error("listener:failed", {
-            type: event.type,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
+      for (const listener of listeners) listener(event);
     },
   };
   return { sink, events };

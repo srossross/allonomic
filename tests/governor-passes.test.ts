@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { buildInterceptorInstructions, buildRejectionContext } from "../src/core/governor/prompts";
 import { falseCompletionSection } from "../src/core/governor/falseCompletions";
-import type { FalseCompletion, GovernorState, UserIntent } from "../src/core/governor/types";
+import type { GovernorState, UserIntent } from "../src/core/governor/types";
 import { recordingContext } from "./helpers/turnContext";
+import { falseCompletion } from "./helpers/governorFixtures";
 import {
   firstInputFor,
   forks,
@@ -23,21 +24,6 @@ const intentA: UserIntent = {
   changelog: [],
 };
 
-const falseCompletion = (id: string, intent_id: string): FalseCompletion => ({
-  id,
-  intent_id,
-  summary: `summary ${id}`,
-  relies_on: "r",
-  completes_as: "c",
-  false_because: "f",
-  detect_by: null,
-  evidence: null,
-  resolution: null,
-  resolution_reason: null,
-  still_assumed: null,
-  directive: null,
-});
-
 const fullState: GovernorState = {
   intent_stack: [intentA],
   completed_intents: [],
@@ -47,10 +33,9 @@ const fullState: GovernorState = {
 const addFalseCompletionArgs = {
   intent_id: "itnt_a",
   summary: "new",
-  relies_on: "r",
   completes_as: "c",
   false_because: "f",
-  directive: "d",
+  check: "k",
 };
 
 describe("governor prompt text", () => {
@@ -161,8 +146,8 @@ describe("governor passes", () => {
         e.messages.filter((m) => m.role === "tool" && m.name === "read_file").map((m) => m.content)
       );
       expect(toolReplies).toEqual([
-        "Error: you do not have the tool read_file. The tools used in the conversation above have been removed and replaced with only false_completion list tools. Your goal is to accurately list the false completions. If you wanted read_file to check something, that unchecked thing is a false completion: record it.",
-        "Error: you do not have the tool read_file. The tools used in the conversation above have been removed and replaced with only false_completion list tools. Your goal is to accurately merge the false completion list.",
+        "Error: you do not have the tool read_file. The agent's tools have been removed. You have only add_false_completion, no_false_completions and finish. If you wanted read_file to verify something, that unverified thing is a false completion: record it.",
+        "Error: you do not have the tool read_file. The agent's tools have been removed. You have only resolve_false_completion, no_false_completions and finish.",
       ]);
 
       expect(
@@ -222,7 +207,7 @@ describe("governor passes", () => {
 
       const verdict = await governor.onAgentFinish(conversation, context);
 
-      expect(verdict).toEqual({ allowFinish: true, nextStep: undefined });
+      expect(verdict).toEqual({ allowFinish: true });
       expect(passes(events)).toEqual(["false_completion.md", "exit.md"]);
       expect(texts(firstInputFor(model.inputs, "FC_LIST")).slice(0, -1)).toEqual(
         texts(conversation)
@@ -238,7 +223,7 @@ describe("governor passes", () => {
         [
           { name: "no_false_completions", args: { intent_id: "itnt_a", reason: "none" } },
           { name: "finish" },
-          { name: "finish", args: { approved: false, feedback: "not done" } },
+          { name: "finish", args: { approved: false } },
         ],
         { initialState: { intent_stack: [intentA] } }
       );
@@ -247,7 +232,27 @@ describe("governor passes", () => {
 
       expect(verdict).toEqual({
         allowFinish: false,
-        feedback: "not done" + buildRejectionContext(governor.state),
+        feedback: "Agent work was rejected." + buildRejectionContext(governor.state),
+      });
+    });
+
+    it("rejection feedback lists the open false completions", async () => {
+      const { context } = recordingContext();
+      const { governor } = scriptedGovernor(
+        runtime,
+        [
+          { name: "add_false_completion", args: addFalseCompletionArgs },
+          { name: "finish" },
+          { name: "finish", args: { approved: false } },
+        ],
+        { initialState: { intent_stack: [intentA] } }
+      );
+
+      const verdict = await governor.onAgentFinish(conversation, context);
+
+      expect(verdict).toEqual({
+        allowFinish: false,
+        feedback: "Add a box\nnew: f\nCheck: k",
       });
     });
   });

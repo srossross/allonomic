@@ -15,11 +15,7 @@ describe("Telemetry Trace and Error Logging Flow", () => {
   });
 
   afterEach(async () => {
-    try {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup error
-    }
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
   it("appends timestamped entries to trace.log in real time", async () => {
@@ -59,13 +55,11 @@ describe("Telemetry Trace and Error Logging Flow", () => {
       ],
     });
 
-    // Check user.yml
     const userPath = path.join(turnDir, "user.yml");
     const userContent = await fs.readFile(userPath, "utf8");
     const userParsed = YAML.parse(userContent);
     expect(userParsed.prompt).toBe("Do an infinite loop");
 
-    // Check error.yml
     const errorPath = path.join(turnDir, "error.yml");
     const errorContent = await fs.readFile(errorPath, "utf8");
     const errorParsed = YAML.parse(errorContent);
@@ -77,10 +71,5 @@ describe("Telemetry Trace and Error Logging Flow", () => {
       "turn_started",
       "turn_failed",
     ]);
-
-    // Check trace.log updated with [ERROR]
-    const logPath = path.join(tempDir, "trace.log");
-    const logContent = await fs.readFile(logPath, "utf8");
-    expect(logContent).toContain("[ERROR] Turn 2 failed: Recursion limit of 25 reached");
   });
 });

@@ -6,6 +6,9 @@ import type { PromptSection } from "./prompts";
 import type { GovernorForkRunner } from "./forkRunner";
 import { createGovernorFalseCompletionTools } from "./falseCompletionTools";
 
+const NUDGE =
+  "You are the reviewer, not the agent. Never reply with text. Call one of your tools, or finish() if the false completion list is complete.";
+
 export interface FalseCompletionPassRequest {
   context: PipelineContext;
   conversation: BaseMessage[];
@@ -43,8 +46,9 @@ export class FalseCompletionPasses {
       promptFile: "false_completion.md",
       tools: toolsNamed(["add_false_completion", "no_false_completions", "finish"]),
       decision,
+      nudge: NUDGE,
       unknownTool: (name) =>
-        `Error: you do not have the tool ${name}. The tools used in the conversation above have been removed and replaced with only false_completion list tools. Your goal is to accurately list the false completions. If you wanted ${name} to check something, that unchecked thing is a false completion: record it.`,
+        `Error: you do not have the tool ${name}. The agent's tools have been removed. You have only add_false_completion, no_false_completions and finish. If you wanted ${name} to verify something, that unverified thing is a false completion: record it.`,
       phase,
       // Shown existing FCs, models stop listing new ones; the merge pass below reconciles instead.
       hideFalseCompletions: true,
@@ -59,8 +63,9 @@ export class FalseCompletionPasses {
       promptFile: "false_completion_merge.md",
       tools: toolsNamed(["resolve_false_completion", "no_false_completions", "finish"]),
       decision,
+      nudge: NUDGE,
       unknownTool: (name) =>
-        `Error: you do not have the tool ${name}. The tools used in the conversation above have been removed and replaced with only false_completion list tools. Your goal is to accurately merge the false completion list.`,
+        `Error: you do not have the tool ${name}. The agent's tools have been removed. You have only resolve_false_completion, no_false_completions and finish.`,
       phase,
       appendix: `## Earlier False Completions\n${[...priorOpenIds].join(", ")}`,
     });
@@ -106,7 +111,7 @@ export function falseCompletionBlocks(getState: () => GovernorState): IntentBloc
     approve: () => {
       const open = openFalseCompletions(getState());
       return open.length > 0
-        ? `Cannot approve with open false completions: ${describeOpen(open)}. Call finish({ approved: false, feedback }) naming what you must still do.`
+        ? `Cannot approve with open false completions: ${describeOpen(open)}. Call finish({ approved: false }).`
         : null;
     },
   };

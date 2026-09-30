@@ -2,7 +2,8 @@ import * as nodeFs from "node:fs/promises";
 import nodePath from "node:path";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
-import type { FileStore, Shell, Paths, Runtime } from "@/core/ports";
+import type { FileStore, Http, Shell, Paths, Runtime } from "@/core/ports";
+import { isNotFound } from "@/core/fsErrors";
 
 const APP_IDENTIFIER = "com.sean.allonomic";
 
@@ -22,8 +23,9 @@ const fs: FileStore = {
     try {
       await nodeFs.access(path);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isNotFound(error)) return false;
+      throw error;
     }
   },
   readDir: async (path) => {
@@ -37,11 +39,28 @@ const shell: Shell = {
   execute: (program, args) =>
     new Promise((resolve) => {
       execFile(program, args, { maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
-        const code =
-          error && "code" in error && typeof error.code === "number" ? error.code : error ? 1 : 0;
-        resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+        const code = error
+          ? error.signal
+            ? null
+            : typeof error.code === "number"
+              ? error.code
+              : 1
+          : 0;
+        const stderrText = String(stderr) || (error ? error.message : "");
+        resolve({ code, stdout: String(stdout), stderr: stderrText });
       });
     }),
+};
+
+const http: Http = {
+  post: async (url, json) => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(json),
+    });
+    return { status: res.status, body: await res.text() };
+  },
 };
 
 export function createNodeRuntime(projectRoot: string = process.cwd()): Runtime {
@@ -57,5 +76,5 @@ export function createNodeRuntime(projectRoot: string = process.cwd()): Runtime 
             APP_IDENTIFIER
           ),
   };
-  return { platform: process.platform, fs, shell, paths };
+  return { platform: process.platform, fs, shell, http, paths };
 }

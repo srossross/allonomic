@@ -8,9 +8,12 @@ import {
   INITIAL_TOOLS,
   DEFAULT_EXECUTION_MODE,
   DEFAULT_GOVERNOR_MODE,
+  DEFAULT_CHAT_TITLE,
   GOVERNOR_MODES,
   createInitialTab,
   createNewTab,
+  createSettingsTab,
+  SETTINGS_TAB_ID,
 } from "@/types";
 import {
   fetchSessionSettingsApi,
@@ -18,6 +21,7 @@ import {
   runAgentPromptApi,
   stopAgentPromptApi,
 } from "@/agent/api";
+import { useTurnQueue, type StartTurn } from "./useTurnQueue";
 import { settingsToTab } from "./tabSettings";
 import type { InterceptorSettings, SettingsPatch } from "@/core/config/settings";
 import type { RecoverableCall } from "@/core/turn/events";
@@ -79,10 +83,9 @@ export function useTabsManager(activeProject: Project) {
       recoverTab,
     });
 
-  const activeProjectTabs = tabs.filter((t) => t.projectId === activeProject?.id);
   const activeTab =
     tabs.find((t) => t.id === activeTabId && t.projectId === activeProject?.id) ||
-    activeProjectTabs.find((t) => t !== undefined) ||
+    tabs.find((t) => t.projectId === activeProject?.id) ||
     tabs[0];
 
   const handleSelectTab = useCallback(
@@ -97,38 +100,39 @@ export function useTabsManager(activeProject: Project) {
 
   const handleNewTab = useCallback(() => {
     const projectTabs = tabs.filter((t) => t.projectId === activeProject?.id);
-    const newTab = createNewTab(activeProject.id, projectTabs.length + 1);
-    const nextTabs = [...tabs, newTab];
-    setTabs(nextTabs);
+    const newTab = createNewTab(activeProject.id);
+    setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newTab.id);
     persistNewTab(newTab, [...projectTabs, newTab]);
   }, [tabs, activeProject, persistNewTab]);
 
   const handleCloseTab = useCallback(
     (tabIdToClose: string) => {
-      setTabs((previous) => {
-        const projectTabs = previous.filter((t) => t.projectId === activeProject.id);
-        if (projectTabs.length <= 1 && projectTabs[0].id === tabIdToClose) return previous;
+      const previous = tabsRef.current;
+      const projectTabs = previous.filter((t) => t.projectId === activeProject.id);
+      if (projectTabs.length <= 1 && projectTabs[0]?.id === tabIdToClose) return;
 
-        const filtered = previous.filter((t) => t.id !== tabIdToClose);
-        const filteredProjectTabs = filtered.filter((t) => t.projectId === activeProject.id);
-        const lastTab = filteredProjectTabs.at(-1);
-        const nextActiveId = activeTabId === tabIdToClose && lastTab ? lastTab.id : activeTabId;
+      const filtered = previous.filter(
+        (t) => t.id !== tabIdToClose || t.projectId !== activeProject.id
+      );
+      const filteredProjectTabs = filtered.filter((t) => t.projectId === activeProject.id);
+      const lastTab = filteredProjectTabs.at(-1);
+      const nextActiveId = activeTabId === tabIdToClose && lastTab ? lastTab.id : activeTabId;
 
-        if (activeTabId === tabIdToClose && lastTab) {
-          setActiveTabId(lastTab.id);
-        }
+      setTabs((prev) =>
+        prev.filter((t) => t.id !== tabIdToClose || t.projectId !== activeProject.id)
+      );
+      if (activeTabId === tabIdToClose && lastTab) {
+        setActiveTabId(lastTab.id);
+      }
 
-        const closingTab = previous.find((t) => t.id === tabIdToClose);
-        persistCloseTab(
-          tabIdToClose,
-          nextActiveId,
-          filteredProjectTabs,
-          closingTab?.title || "Chat"
-        );
-
-        return filtered;
-      });
+      const closingTab = previous.find((t) => t.id === tabIdToClose);
+      persistCloseTab(
+        tabIdToClose,
+        nextActiveId,
+        filteredProjectTabs,
+        closingTab?.title || DEFAULT_CHAT_TITLE
+      );
     },
     [activeTabId, persistCloseTab, activeProject]
   );
@@ -179,8 +183,70 @@ export function useTabsManager(activeProject: Project) {
     updateActiveTab({ executionMode: AVAILABLE_MODES[nextIndex].id });
   }, [updateActiveTab, activeTab.executionMode]);
 
+  const startTurn = useCallback<StartTurn>(
+    async (tab, text, onTurnEvent) => {
+      const latest = tabsRef.current.find((t) => t.id === tab.id) ?? tab;
+      setTabs((previous) => previous.map((t) => (t.id === tab.id ? { ...t, loading: true } : t)));
+      const controller = new AbortController();
+      abortControllersReference.current.set(tab.id, controller);
+      try {
+        await runTurn(tab.id, async (onEvent) => {
+          const { title } = await runAgentPromptApi({
+            prompt: text,
+            threadId: tab.threadId,
+            sessionId: tab.id,
+            workspaceDir: activeProject?.path,
+            history: buildHistory(latest.messages),
+            signal: controller.signal,
+            onEvent: (event) => {
+              onEvent(event);
+              onTurnEvent(event);
+            },
+          });
+          if (title) {
+            setTabs((previous) => previous.map((t) => (t.id === tab.id ? { ...t, title } : t)));
+          }
+        });
+      } finally {
+        abortControllersReference.current.delete(tab.id);
+      }
+      await refreshTabSettings(tab.id);
+    },
+    [activeProject, runTurn, refreshTabSettings]
+  );
+
+  const queue = useTurnQueue(setTabs, startTurn);
+
+  const openSettingsTab = useCallback(() => {
+    const projectTabs = tabsRef.current.filter((t) => t.projectId === activeProject.id);
+    if (projectTabs.every((t) => t.id !== SETTINGS_TAB_ID)) {
+      const settingsTab = createSettingsTab(activeProject.id);
+      projectTabs.push(settingsTab);
+      setTabs((previous) => [...previous, settingsTab]);
+    }
+    setActiveTabId(SETTINGS_TAB_ID);
+    persistTabSwitch(SETTINGS_TAB_ID, projectTabs);
+  }, [activeProject, persistTabSwitch]);
+
+  const handleSendMessage = useCallback(
+    (text: string) => (text === "/settings" ? openSettingsTab() : queue.send(activeTab, text)),
+    [queue, activeTab, openSettingsTab]
+  );
+  const handlePause = useCallback(() => queue.pause(activeTab), [queue, activeTab]);
+  const handleResume = useCallback(
+    (text: string) => queue.resume(activeTab, text),
+    [queue, activeTab]
+  );
+  const handleRemoveQueued = useCallback(
+    (id: string) => queue.didRemove(activeTab, id),
+    [queue, activeTab]
+  );
+  const handlePopQueued = useCallback(() => queue.pop(activeTab), [queue, activeTab]);
+
   const handleStopMessage = useCallback(async () => {
     const currentTabId = activeTab.id;
+    queue.hold(activeTab);
+    if (!activeTab.loading) return;
     const controller = abortControllersReference.current.get(currentTabId);
     if (controller) {
       controller.abort();
@@ -193,34 +259,14 @@ export function useTabsManager(activeProject: Project) {
         previous.map((t) => (t.id === currentTabId ? { ...t, loading: false } : t))
       );
     }
-  }, [activeTab.id, activeTab.threadId]);
+  }, [activeTab, queue]);
 
-  const handleSendMessage = useCallback(
-    async (text: string) => {
-      const tab = activeTab;
-      setTabs((previous) => previous.map((t) => (t.id === tab.id ? { ...t, loading: true } : t)));
+  const handleRetry = useCallback(() => recoverTab(activeTab, []), [recoverTab, activeTab]);
 
-      const controller = new AbortController();
-      abortControllersReference.current.set(tab.id, controller);
-      try {
-        await runTurn(tab.id, (onEvent) =>
-          runAgentPromptApi({
-            prompt: text,
-            threadId: tab.threadId,
-            sessionId: tab.id,
-            workspaceDir: activeProject?.path,
-            history: buildHistory(tab.messages),
-            signal: controller.signal,
-            onEvent,
-          })
-        );
-      } finally {
-        abortControllersReference.current.delete(tab.id);
-      }
-      await refreshTabSettings(tab.id);
-    },
-    [activeTab, activeProject, runTurn, refreshTabSettings]
-  );
+  const handleSettingsSaved = useCallback(async () => {
+    const chats = tabsRef.current.filter((t) => t.projectId === activeProject?.id && !t.kind);
+    await Promise.all(chats.map((t) => refreshTabSettings(t.id)));
+  }, [activeProject?.id, refreshTabSettings]);
 
   const handleClearConsole = useCallback(
     (targetTabId?: string) => {
@@ -258,7 +304,6 @@ export function useTabsManager(activeProject: Project) {
 
   return {
     tabs,
-    setTabs,
     activeTabId,
     activeTab,
     setActiveTabId: handleSelectTab,
@@ -274,10 +319,15 @@ export function useTabsManager(activeProject: Project) {
     handleCycleGovernorMode,
     handleSendMessage,
     handleStopMessage,
+    handlePause,
+    handleResume,
+    handleRemoveQueued,
+    handlePopQueued,
+    handleRetry,
     handleClearConsole,
     handleToggleContext,
     handleToggleTool,
     handleSetAllTools,
-    runTurn,
+    handleSettingsSaved,
   };
 }

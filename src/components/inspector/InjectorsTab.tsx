@@ -5,6 +5,7 @@ import { InjectorRow } from "./InjectorRow";
 
 interface InjectorsTabProperties {
   interceptors: InterceptorInfo[];
+  error?: string;
   expandedNames: Set<string>;
   onToggleExpand: (name: string) => void;
   models: ModelOption[];
@@ -14,6 +15,7 @@ interface InjectorsTabProperties {
 
 export function InjectorsTab({
   interceptors,
+  error,
   expandedNames,
   onToggleExpand,
   models,
@@ -22,6 +24,11 @@ export function InjectorsTab({
 }: InjectorsTabProperties) {
   return (
     <div className="space-y-2">
+      {error && (
+        <div className="text-destructive p-3 font-mono text-xs">
+          Failed to load interceptors: {error}
+        </div>
+      )}
       <div className="flex items-center justify-between px-1 text-xs">
         <span className="text-muted-foreground text-2xs font-mono font-semibold tracking-wider uppercase">
           Interceptors ({interceptors.length})

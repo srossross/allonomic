@@ -1,8 +1,9 @@
 import type { Runtime } from "./ports";
 import type { ContextFile } from "./turn/events";
 import { join } from "./paths";
+import { isNotFound } from "./fsErrors";
 
-export const USER_CONFIG_DIR = ".allonomic";
+const USER_CONFIG_DIR = ".allonomic";
 
 export interface LoadedFile {
   path: string;
@@ -16,15 +17,9 @@ export async function readContextFile(runtime: Runtime, path: string): Promise<L
   try {
     return { path, text: await runtime.fs.readText(path), missing: false, loadedAt };
   } catch (error) {
-    console.warn(`Failed to read ${path}:`, error);
+    if (!isNotFound(error)) throw error;
     return { path, text: "", missing: true, loadedAt };
   }
-}
-
-export async function readOptionalContextFile(runtime: Runtime, path: string): Promise<LoadedFile> {
-  return (await runtime.fs.exists(path))
-    ? readContextFile(runtime, path)
-    : { path, text: "", missing: true, loadedAt: new Date().toISOString() };
 }
 
 export async function userConfigDir(runtime: Runtime): Promise<string> {
@@ -42,7 +37,7 @@ export async function loadRuleFiles(
   ]);
   return Promise.all(
     [join(userDir, relativePath), join(workspace, relativePath)].map((path) =>
-      readOptionalContextFile(runtime, path)
+      readContextFile(runtime, path)
     )
   );
 }

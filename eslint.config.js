@@ -143,6 +143,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["src/adapters/node/**/*.ts"],
+    rules: {
+      "no-restricted-globals": "off",
+    },
+  },
+  {
     files: ["src/components/ui/**/*.tsx"],
     rules: {
       "better-tailwindcss/no-restricted-classes": "off",

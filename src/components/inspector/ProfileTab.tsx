@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Profile, ProfileSpan, ProfileTurn } from "@/core/turn/profile";
 import { RATE_LIMIT_SOURCE, TOOL_SOURCE, USER_SOURCE, WORKER_SOURCE } from "@/core/turn/waiting";
+import { toggleInSet } from "@/lib/toggleInSet";
 
 const SOURCE_STYLES: Record<string, { label: string; bar: string }> = {
   [WORKER_SOURCE]: { label: "Worker model", bar: "bg-primary" },
@@ -113,7 +114,11 @@ function BySource({
           const fraction = isIncluded && includedMs > 0 ? sourceMs / includedMs : 0;
           return (
             <div key={key} className="flex items-center gap-2 font-mono text-xs">
-              <Checkbox checked={isIncluded} onCheckedChange={() => onToggle(key)} />
+              <Checkbox
+                aria-label={`Include ${style.label}${hook ? ` · ${hook}` : ""}`}
+                checked={isIncluded}
+                onCheckedChange={() => onToggle(key)}
+              />
               <span className="text-foreground w-44 truncate">
                 {style.label}
                 {hook && <span className="text-muted-foreground"> · {hook}</span>}
@@ -194,12 +199,7 @@ export function ProfileTab({ profile }: { profile: Profile }) {
     return <div className="text-muted-foreground p-3 font-mono text-xs">No turns yet.</div>;
   }
 
-  const toggleExcluded = (key: string) =>
-    setExcluded((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
+  const toggleExcluded = (key: string) => setExcluded((previous) => toggleInSet(previous, key));
 
   const turns = profile.turns.filter((t) => selectedTurn === "all" || t.turnIndex === selectedTurn);
   const turnIndexes = new Set(turns.map((t) => t.turnIndex));
@@ -211,6 +211,7 @@ export function ProfileTab({ profile }: { profile: Profile }) {
     <div className="space-y-4 px-1">
       <div className="flex items-center justify-between font-mono text-xs">
         <select
+          aria-label="Turn"
           value={selectedTurn}
           onChange={(e) =>
             setSelectedTurn(e.target.value === "all" ? "all" : Number(e.target.value))

@@ -9,6 +9,7 @@ interface IntentDetailViewProperties {
   isDone: boolean;
   falseCompletions: FalseCompletion[];
   reframed: string | undefined;
+  reframeError?: string;
   focusFalseCompletionId: string | null;
   onBack: () => void;
 }
@@ -63,10 +64,9 @@ function FalseCompletionDetail({
         <span className="font-mono">{falseCompletion.id}</span>
         <Chip>{falseCompletion.resolution ?? "open"}</Chip>
       </div>
-      <Field label="Relies On">{falseCompletion.relies_on}</Field>
       <Field label="Completes As">{falseCompletion.completes_as}</Field>
       <Field label="False Because">{falseCompletion.false_because}</Field>
-      {falseCompletion.detect_by && <Field label="Detect By">{falseCompletion.detect_by}</Field>}
+      <Field label="Check">{falseCompletion.check}</Field>
       <Field label="Evidence">
         {falseCompletion.evidence ? (
           <>
@@ -96,6 +96,7 @@ export function IntentDetailView({
   isDone,
   falseCompletions,
   reframed,
+  reframeError,
   focusFalseCompletionId,
   onBack,
 }: IntentDetailViewProperties) {
@@ -128,6 +129,11 @@ export function IntentDetailView({
         </div>
         {reframed && reframed !== intent.description && (
           <Field label="Satisfaction Condition">{reframed}</Field>
+        )}
+        {reframeError && (
+          <Field label="Satisfaction Condition">
+            <span className="text-destructive">{reframeError}</span>
+          </Field>
         )}
       </div>
 

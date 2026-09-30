@@ -1,6 +1,7 @@
 import type { BaseMessage, ToolMessage } from "@langchain/core/messages";
 import type { TurnEventSink } from "../turn/events";
 import type { UserPrompt, UserPromptValue } from "../../types/tools";
+import type { TurnControl } from "./turnControl";
 
 export type AskUser = (prompt: UserPrompt, toolCallId?: string) => Promise<UserPromptValue>;
 
@@ -18,7 +19,6 @@ export interface ToolApproval {
 export interface ExitVerdict {
   allowFinish: boolean;
   feedback?: string;
-  nextStep?: string;
 }
 
 export interface PipelineContext {
@@ -28,6 +28,7 @@ export interface PipelineContext {
   turnIndex: number;
   events: TurnEventSink;
   askUser: AskUser;
+  control?: TurnControl;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -59,10 +60,6 @@ export function readToolCallId(config: unknown): string | undefined {
   return isRecord(toolCall) && typeof toolCall.id === "string" ? toolCall.id : undefined;
 }
 
-/**
- * Every hook receives `conversation`: the exact message list the worker model sees
- * (system prompt + sanitized history). Interceptors fork from it; nothing they append flows back.
- */
 export const INTERCEPTOR_HOOKS = [
   "onUserPrompt",
   "onPreToolCall",

@@ -1,4 +1,5 @@
 import { tool, StructuredTool } from "@langchain/core/tools";
+import { rethrowIfFatal } from "./fatal";
 import { DEFAULT_EXECUTION_MODE, LEVEL_MODES, type AccessLevel, type UserPrompt } from "@/types";
 import type { Runtime } from "../ports";
 import { dirname } from "../paths";
@@ -66,6 +67,7 @@ export function createFilesystemTools(
       }
       return content;
     } catch (error: unknown) {
+      rethrowIfFatal(error);
       const message = error instanceof Error ? error.message : String(error);
       return `Error reading file ${filePath}: ${message}`;
     }
@@ -90,6 +92,7 @@ export function createFilesystemTools(
       await runtime.fs.writeText(fullPath, content);
       return `Successfully wrote ${content.length} bytes to ${filePath}`;
     } catch (error: unknown) {
+      rethrowIfFatal(error);
       const message = error instanceof Error ? error.message : String(error);
       return `Error writing file ${filePath}: ${message}`;
     }
@@ -102,12 +105,6 @@ export function createFilesystemTools(
         return `Error editing file ${filePath}: oldString and newString are identical`;
       }
       const fullPath = await resolvePath(filePath);
-      const content = await runtime.fs.readText(fullPath);
-      const count = content.split(oldString).length - 1;
-      if (count === 0) return `Error editing file ${filePath}: oldString not found`;
-      if (count > 1 && !replaceAll) {
-        return `Error editing file ${filePath}: oldString found ${count} times; add context to make it unique or set replaceAll`;
-      }
       const rejection = await rejectionIfDeclined(
         config,
         TOOL_SPECS.editFile.name,
@@ -116,13 +113,29 @@ export function createFilesystemTools(
         {
           kind: "confirm",
           label: `Edit ${filePath}`,
-          detail: `${count} replacement${count === 1 ? "" : "s"}`,
+          detail: replaceAll ? "Replace all occurrences" : "Replace one occurrence",
         }
       );
       if (rejection) return rejection;
-      await runtime.fs.writeText(fullPath, content.split(oldString).join(newString));
-      return `Successfully made ${count} replacement${count === 1 ? "" : "s"} in ${filePath}`;
+      const content = await runtime.fs.readText(fullPath);
+      const parts = content.split(oldString);
+      const count = parts.length - 1;
+      if (count === 0) return `Error editing file ${filePath}: oldString not found`;
+      if (!replaceAll && count > 1) {
+        return `Error editing file ${filePath}: oldString found ${count} times; add context to make it unique or set replaceAll`;
+      }
+      await runtime.fs.writeText(fullPath, parts.join(newString));
+      const oldLineCount = oldString.split("\n").length - 1;
+      let line = 1;
+      const startLines = parts.slice(0, -1).map((part) => {
+        line += part.split("\n").length - 1;
+        const start = line;
+        line += oldLineCount;
+        return start;
+      });
+      return `Successfully made ${count} replacement${count === 1 ? "" : "s"} in ${filePath} at line${count === 1 ? "" : "s"} ${startLines.join(", ")}`;
     } catch (error: unknown) {
+      rethrowIfFatal(error);
       const message = error instanceof Error ? error.message : String(error);
       return `Error editing file ${filePath}: ${message}`;
     }
@@ -147,6 +160,7 @@ export function createFilesystemTools(
         .map((entry) => `${entry.isDirectory ? "[DIR]" : "[FILE]"} ${entry.name}`)
         .join("\n");
     } catch (error: unknown) {
+      rethrowIfFatal(error);
       const message = error instanceof Error ? error.message : String(error);
       return `Error listing directory ${directory}: ${message}`;
     }

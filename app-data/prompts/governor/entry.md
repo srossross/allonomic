@@ -5,7 +5,7 @@ Your sole job right now is to maintain the User Intent Stack for the latest user
 ### 1. Intent is strictly USER Intent
 
 - An intent describes what the **human** wants to know or achieve.
-- **NEVER** describe your own task or plan as an intent (e.g., NEVER "Ask user for clarification" or "Read file").
+- **NEVER** describe the agent's own task or plan as an intent (e.g., NEVER "Ask user for clarification" or "Read file").
 
 ### 2. Questions vs. Direct Action
 

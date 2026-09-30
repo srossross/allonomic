@@ -26,7 +26,10 @@ import { loadPromptFile } from "../governor/prompts";
 import { loadRuleFiles, ruleSections, toContextFiles } from "../contextFiles";
 import type { PreToolDecision } from "../governor/tools";
 import { resolveSettings } from "../config/settings";
+import { DEFAULT_MODEL_ID } from "../../types/chat";
 import { parseShellResult } from "../tools/shellResult";
+import { TOOL_SPECS, type ToolSpec } from "../tools/specs";
+import { ZodType } from "zod";
 import {
   createTeacherPostToolTools,
   createTeacherPreToolTools,
@@ -60,6 +63,25 @@ interface ForkRequest<T> {
   appendix: string;
 }
 
+function workerToolSpecs(enabled: string[]): string {
+  const specs: ToolSpec[] = Object.values(TOOL_SPECS);
+  return YAML.stringify(
+    specs
+      .filter((spec) => enabled.includes(spec.name))
+      .map(({ name, description, schema }) => ({
+        name,
+        description,
+        args: Object.fromEntries(
+          Object.entries(schema.shape).flatMap(([arg, type]) =>
+            type instanceof ZodType
+              ? [[type.isOptional() ? `${arg}?` : arg, type.description ?? ""]]
+              : []
+          )
+        ),
+      }))
+  );
+}
+
 function describeCall(call: ToolCall): string {
   return `${call.id ?? "(no id)"} ${call.name}(${JSON.stringify(call.args)})`;
 }
@@ -79,7 +101,7 @@ function splitProposal(conversation: BaseMessage[]): {
 function proposalSection(call: ToolCall, proposal?: AIMessage): string {
   const reasoning = proposal ? messageText(proposal.content).trim() : "";
   return [
-    reasoning && `Worker's message alongside the call:\n${reasoning}`,
+    reasoning && `Agent's message alongside the call:\n${reasoning}`,
     `Call: ${describeCall(call)}`,
   ]
     .filter(Boolean)
@@ -104,7 +126,7 @@ export class ToolTeacherInterceptor implements AgentInterceptor {
   constructor(options: ToolTeacherOptions) {
     this.runtime = options.runtime;
     this.apiKey = options.apiKey || findApiKey();
-    this.modelName = options.modelName ?? "gemini-3.8-flash";
+    this.modelName = options.modelName ?? DEFAULT_MODEL_ID;
     this.createModelOverride = options.createModel;
   }
 
@@ -141,6 +163,7 @@ export class ToolTeacherInterceptor implements AgentInterceptor {
       manual.text.trim(),
       template.text.trim(),
       ...ruleSections(rules),
+      `## Agent Tools\n\`\`\`yaml\n${workerToolSpecs(settings.enabledTools).trim()}\n\`\`\``,
       `## Current Settings\n\`\`\`yaml\n${current.trim()}\n\`\`\``,
     ]
       .filter(Boolean)
@@ -162,6 +185,7 @@ export class ToolTeacherInterceptor implements AgentInterceptor {
         tools,
         decision,
         nudge,
+        sessionId: context.sessionId,
         waiting: { events: context.events, source: this.name, hook: PHASE_HOOK[phase] },
       });
       return decided;

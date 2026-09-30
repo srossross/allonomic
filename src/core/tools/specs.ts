@@ -112,4 +112,23 @@ export const TOOL_SPECS = {
       reason: z.string().describe("Why the change is needed; shown to the user"),
     }),
   },
+  webSearch: {
+    name: "web_search",
+    category: "other",
+    description:
+      "Search the web. Returns the title, URL and a content excerpt for each result. Use web_fetch to read a result in full.",
+    schema: z.object({
+      query: z.string().describe("The search query"),
+      limit: z.number().int().optional().default(5).describe("Maximum number of results, 1-20"),
+    }),
+  },
+  webFetch: {
+    name: "web_fetch",
+    category: "other",
+    description:
+      "Fetch a web page and return its main content as markdown, without navigation, scripts or styles.",
+    schema: z.object({
+      url: z.string().describe("The URL to fetch"),
+    }),
+  },
 } satisfies Record<string, ToolSpec>;

@@ -43,6 +43,9 @@ export function useTurnDispatch(
       let isSettled = false;
       const onEvent: TurnEventListener = (event) => {
         if (isTerminal(event)) isSettled = true;
+        if (event.type === "warning") {
+          setTimeout(() => globalThis.alert(`Warning: ${event.source}: ${event.message}`));
+        }
         setTabs((previous) =>
           previous.map((t) => (t.id === tabId ? applyTurnEventToTab(t, event) : t))
         );
@@ -51,16 +54,15 @@ export function useTurnDispatch(
       try {
         await call(onEvent);
       } catch (error: unknown) {
-        if (!isSettled) {
-          onEvent(
-            createDetachedTurnEvent({
-              type: "turn_failed",
-              error: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined,
-              aborted: error instanceof Error && error.name === "AbortError",
-            })
-          );
-        }
+        if (isSettled) throw error;
+        onEvent(
+          createDetachedTurnEvent({
+            type: "turn_failed",
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            aborted: error instanceof Error && error.name === "AbortError",
+          })
+        );
       } finally {
         setTabs((previous) =>
           previous.map((t) =>

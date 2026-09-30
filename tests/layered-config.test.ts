@@ -5,6 +5,7 @@ import {
   resolveSettings,
   updateSessionSettings,
 } from "../src/core/config/settings";
+import { loadScopedSettings, saveSettingsLayer } from "../src/core/config/scopedSettings";
 
 const USER = "/appconfig/config.yml";
 const REPO_PROJECT = "/w/.allonomic/config.yml";
@@ -28,7 +29,7 @@ describe("layered config", () => {
   it("rejects an invalid user config", async () => {
     const runtime = createMemoryRuntime();
     runtime.fs.files.set(USER, "sandbox:\n  deny: nope\n");
-    expect(resolveSettings(runtime, "/w")).rejects.toThrow("Invalid config");
+    await expect(resolveSettings(runtime, "/w")).rejects.toThrow("Invalid config");
   });
 
   it("applies user < project < session from user config", async () => {
@@ -102,6 +103,36 @@ describe("layered config", () => {
     runtime.fs.files.set(REPO_SESSION, "session_id: s1\nexecution_mode: accept edits\n");
     const settings = await resolveSettings(runtime, "/w", "s1");
     expect(settings.executionMode).toBe("restricted");
+  });
+
+  it("saves each scope's layer without touching the others", async () => {
+    const runtime = createMemoryRuntime();
+    await updateSessionSettings(runtime, "/w", "s1", { model: "c" });
+    await saveSettingsLayer(runtime, "/w", "s1", "project", { model: "b" });
+    await saveSettingsLayer(runtime, "/w", "s1", "user", { model: "a" });
+    const scoped = await loadScopedSettings(runtime, "/w", "s1");
+    expect(scoped.layers).toEqual({
+      user: { model: "a" },
+      project: { model: "b" },
+      session: { model: "c" },
+    });
+    expect(scoped.inherited.project.model).toBe("a");
+    expect(scoped.inherited.session.model).toBe("b");
+    const resolved = await resolveSettings(runtime, "/w", "s1");
+    expect(resolved.model).toBe("c");
+
+    await saveSettingsLayer(runtime, "/w", "s1", "session", {});
+    const cleared = await resolveSettings(runtime, "/w", "s1");
+    expect(cleared.model).toBe("b");
+  });
+
+  it("repo model feeds inherited values but not the user layers", async () => {
+    const runtime = createMemoryRuntime();
+    runtime.fs.files.set(REPO_PROJECT, "model: repo-model\n");
+    const scoped = await loadScopedSettings(runtime, "/w", "s1");
+    expect(scoped.repoDefaults.model).toBe("repo-model");
+    expect(scoped.inherited.project.model).toBe("repo-model");
+    expect(scoped.layers.project.model).toBeUndefined();
   });
 
   it("tab updates are stored per session in user config", async () => {

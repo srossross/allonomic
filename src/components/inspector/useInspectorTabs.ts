@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { fetchWorkspaceStateApi, saveInspectorTabsApi } from "@/agent/api";
 import { normalizeTabOrder, touchTab, type InspectorTabId } from "./inspectorTabs";
+import { withAlert } from "@/lib/alertError";
 
 export function useInspectorTabs(workspacePath?: string) {
   const [order, setOrder] = useState<InspectorTabId[]>(() => normalizeTabOrder([]));
@@ -12,7 +13,7 @@ export function useInspectorTabs(workspacePath?: string) {
       const { state } = await fetchWorkspaceStateApi(path);
       if (!isCancelled && state?.inspectorTabs) setOrder(normalizeTabOrder(state.inspectorTabs));
     }
-    void load(workspacePath);
+    void withAlert("Load inspector tabs", () => load(workspacePath));
     return () => {
       isCancelled = true;
     };
@@ -22,7 +23,8 @@ export function useInspectorTabs(workspacePath?: string) {
     (id: InspectorTabId) => {
       const next = touchTab(order, id);
       setOrder(next);
-      if (workspacePath) void saveInspectorTabsApi(workspacePath, next);
+      if (workspacePath)
+        void withAlert("Save inspector tabs", () => saveInspectorTabsApi(workspacePath, next));
     },
     [order, workspacePath]
   );

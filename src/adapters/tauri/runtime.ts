@@ -8,7 +8,8 @@ import {
 } from "@tauri-apps/plugin-fs";
 import { appConfigDir, homeDir, resolve, resolveResource } from "@tauri-apps/api/path";
 import { Command } from "@tauri-apps/plugin-shell";
-import type { FileStore, Shell, Paths, Runtime } from "@/core/ports";
+import { fetch } from "@tauri-apps/plugin-http";
+import type { FileStore, Http, Shell, Paths, Runtime } from "@/core/ports";
 
 const fs: FileStore = {
   readText: (path) => readTextFile(path),
@@ -30,6 +31,17 @@ const shell: Shell = {
   },
 };
 
+const http: Http = {
+  post: async (url, json) => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(json),
+    });
+    return { status: res.status, body: await res.text() };
+  },
+};
+
 const paths: Paths = {
   resolve: (...parts) => resolve(...parts),
   resource: (relativePath) => resolveResource(relativePath),
@@ -44,4 +56,4 @@ function detectPlatform(): string {
   return ua.includes("Linux") ? "linux" : "unknown";
 }
 
-export const tauriRuntime: Runtime = { platform: detectPlatform(), fs, shell, paths };
+export const tauriRuntime: Runtime = { platform: detectPlatform(), fs, shell, http, paths };

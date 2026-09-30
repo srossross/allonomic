@@ -4,6 +4,7 @@ import {
   extractThinking,
   extractFinalResponse,
   sanitizeMessagesForModel,
+  stripThinking,
 } from "../src/core/graph/thinking";
 import {
   convertMessageContentToParts,
@@ -12,7 +13,6 @@ import {
 
 describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
   it("extracts thinking from both modern LangChain 2.x 'thinking' parts and legacy 'thought' parts", () => {
-    // Modern LangChain 2.x thinking format
     const modernMsg = new AIMessage({
       content: [
         { type: "thinking", thinking: "Step 1: Check requirements." },
@@ -21,7 +21,6 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
     });
     expect(extractThinking(modernMsg)).toBe("Step 1: Check requirements.");
 
-    // Legacy thought format
     const legacyMsg = new AIMessage({
       content: [
         { type: "thought", text: "Legacy thought process." },
@@ -30,7 +29,6 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
     });
     expect(extractThinking(legacyMsg)).toBe("Legacy thought process.");
 
-    // additional_kwargs thinking fallback
     const kwargsMsg = new AIMessage({
       content: "Result text",
       additional_kwargs: { thinking: "Kwargs thinking trace." },
@@ -48,7 +46,7 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
       }),
     ];
 
-    const { response, thinking } = extractFinalResponse(messages);
+    const { response, thinking } = extractFinalResponse(messages, 0);
     expect(response).toBe("All systems nominal.");
     expect(thinking).toBe("Internal calculation...");
   });
@@ -75,7 +73,6 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
     });
 
     const [sanitized] = sanitizeMessagesForModel([original]);
-    // Thinking part should be stripped from content
     expect(Array.isArray(sanitized.content)).toBe(true);
     if (Array.isArray(sanitized.content)) {
       expect(
@@ -88,10 +85,45 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
       ).toBe(false);
     }
 
-    // Metadata for thought signature must remain intact
     expect(
       sanitized.additional_kwargs?.[_FUNCTION_CALL_THOUGHT_SIGNATURES_MAP_KEY]?.["call_abc123"]
     ).toBe("cryptographic_sig_xyz");
+  });
+
+  it("stripThinking removes every thinking form without touching the worker's messages", () => {
+    const original = new AIMessage({
+      content: [
+        { type: "thinking", thinking: "modern thinking" },
+        { type: "thought", text: "legacy thought" },
+        { type: "text", text: "gemini thought", thought: true },
+        { type: "text", text: "I will call push_intent" },
+      ],
+      tool_calls: [
+        {
+          name: "push_intent",
+          args: { kind: "request", description: "test" },
+          id: "call_abc123",
+          type: "tool_call",
+        },
+      ],
+      additional_kwargs: {
+        thinking: "kwargs thinking",
+        [_FUNCTION_CALL_THOUGHT_SIGNATURES_MAP_KEY]: { call_abc123: "sig" },
+      },
+    });
+
+    const [stripped] = stripThinking([original]);
+
+    expect(stripped.content).toEqual([{ type: "text", text: "I will call push_intent" }]);
+    expect(extractThinking(stripped)).toBe("");
+    expect(stripped.additional_kwargs.thinking).toBeUndefined();
+    expect(
+      stripped.additional_kwargs[_FUNCTION_CALL_THOUGHT_SIGNATURES_MAP_KEY]?.["call_abc123"]
+    ).toBe("sig");
+    expect(AIMessage.isInstance(stripped) && stripped.tool_calls?.[0].id).toBe("call_abc123");
+
+    expect(original.content).toHaveLength(4);
+    expect(original.additional_kwargs.thinking).toBe("kwargs thinking");
   });
 
   it("convertMessageContentToParts encodes thoughtSignature on functionCall parts for Gemini 3", () => {
@@ -199,7 +231,7 @@ describe("Gemini 3 Thinking & Thought Signatures Flow", () => {
       }),
     ];
 
-    const { response, thinking } = extractFinalResponse(multiTurnMessages);
+    const { response, thinking } = extractFinalResponse(multiTurnMessages, 2);
     expect(response).toBe("");
     expect(thinking).toBe("Tool selection thinking trace");
     expect(thinking.includes("Greeting thinking trace")).toBe(false);

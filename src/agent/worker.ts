@@ -2,17 +2,11 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { Runtime } from "../core/ports";
 import { MessagesAnnotation, StateGraph, START, END, MemorySaver } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
-import type { BaseMessageLike } from "@langchain/core/messages";
 import { createAgentTools } from "../core/tools";
-import { logConversation } from "../core/telemetry/logger";
 import { findApiKey } from "../common/env";
 import { join, dirname } from "../core/paths";
-import {
-  readContextFile,
-  readOptionalContextFile,
-  userConfigDir,
-  type LoadedFile,
-} from "../core/contextFiles";
+import { DEFAULT_MODEL_ID } from "../types/chat";
+import { readContextFile, userConfigDir, type LoadedFile } from "../core/contextFiles";
 
 export interface WorkerAgentOptions {
   runtime: Runtime;
@@ -40,9 +34,8 @@ async function loadAgentFiles(runtime: Runtime, workspaceDir: string): Promise<L
   while (true) {
     const found: LoadedFile[] = [];
     for (const name of AGENT_FILES) {
-      const path = join(dir, name);
-      if (dir === workspace) found.push(await readOptionalContextFile(runtime, path));
-      else if (await runtime.fs.exists(path)) found.push(await readContextFile(runtime, path));
+      const file = await readContextFile(runtime, join(dir, name));
+      if (dir === workspace || !file.missing) found.push(file);
     }
     files.unshift(...found);
     const parent = dirname(dir);
@@ -51,7 +44,7 @@ async function loadAgentFiles(runtime: Runtime, workspaceDir: string): Promise<L
   }
   const userDir = await userConfigDir(runtime);
   const userFiles = await Promise.all(
-    AGENT_FILES.map((name) => readOptionalContextFile(runtime, join(userDir, name)))
+    AGENT_FILES.map((name) => readContextFile(runtime, join(userDir, name)))
   );
   return [...userFiles, ...files];
 }
@@ -80,9 +73,8 @@ export async function createWorkerAgent(options: WorkerAgentOptions) {
   const { runtime } = options;
   const workspaceDir = options.workspaceDir || ".";
   const enableTools = options.enableTools ?? true;
-  const workerPrompt = options.systemPrompt
-    ? undefined
-    : await loadWorkerPrompt(runtime, workspaceDir);
+  const workerPrompt =
+    options.systemPrompt === undefined ? await loadWorkerPrompt(runtime, workspaceDir) : undefined;
   const systemPrompt = options.systemPrompt ?? workerPrompt?.prompt ?? "";
 
   const systemMessage = {
@@ -90,56 +82,34 @@ export async function createWorkerAgent(options: WorkerAgentOptions) {
     content: systemPrompt,
   };
 
+  const tools = enableTools ? createAgentTools(runtime, workspaceDir) : [];
+  const chat = new ChatGoogleGenerativeAI({
+    model: options.modelName ?? DEFAULT_MODEL_ID,
+    apiKey,
+    temperature: enableTools ? 0 : 0.7,
+  });
+  const model = enableTools ? chat.bindTools(tools) : chat;
+
+  const callModel = async (state: typeof MessagesAnnotation.State) => {
+    const response = await model.invoke([systemMessage, ...state.messages]);
+    return { messages: [response] };
+  };
+
   const workflow = new StateGraph(MessagesAnnotation);
 
   if (enableTools) {
-    const tools = createAgentTools(runtime, workspaceDir);
-    const toolNode = new ToolNode(tools);
-
-    const model = new ChatGoogleGenerativeAI({
-      model: options.modelName ?? "gemini-3.8-flash",
-      apiKey,
-      temperature: 0,
-    }).bindTools(tools);
-
-    const callModel = async (state: typeof MessagesAnnotation.State) => {
-      const messages = [systemMessage, ...state.messages];
-      const response = await model.invoke(messages);
-      return { messages: [response] };
-    };
-
     workflow
       .addNode("agent", callModel)
-      .addNode("tools", toolNode)
+      .addNode("tools", new ToolNode(tools))
       .addEdge(START, "agent")
       .addConditionalEdges("agent", toolsCondition)
       .addEdge("tools", "agent");
   } else {
-    // Pure conversational without tools
-    const model = new ChatGoogleGenerativeAI({
-      model: options.modelName ?? "gemini-3.8-flash",
-      apiKey,
-      temperature: 0.7,
-    });
-
-    const callModel = async (state: typeof MessagesAnnotation.State) => {
-      const messages = [systemMessage, ...state.messages];
-      const response = await model.invoke(messages);
-      return { messages: [response] };
-    };
-
     workflow.addNode("agent", callModel).addEdge(START, "agent").addEdge("agent", END);
   }
 
   const checkpointer = new MemorySaver();
   const compiled = workflow.compile({ checkpointer });
 
-  return {
-    compiled,
-    async run(messages: BaseMessageLike[], threadId: string = "default") {
-      const result = await compiled.invoke({ messages }, { configurable: { thread_id: threadId } });
-      const logPath = await logConversation(runtime.fs, result.messages, workspaceDir);
-      return { result, logPath };
-    },
-  };
+  return { compiled };
 }

@@ -25,7 +25,6 @@ export function ContextView({ contextList }: ContextViewProperties) {
           key={index}
           className="border-border/60 bg-muted/20 space-y-1.5 rounded-xs border p-2 font-mono text-xs"
         >
-          {/* Header: Role badge & Name */}
           <div className="text-2xs flex items-center justify-between">
             <span
               className={`rounded-xs px-1.5 py-0.5 font-semibold tracking-wider uppercase ${
@@ -46,7 +45,6 @@ export function ContextView({ contextList }: ContextViewProperties) {
             <span className="text-muted-foreground/60 text-2xs">#{index + 1}</span>
           </div>
 
-          {/* Thinking trace if present */}
           {message.thinking && (
             <div className="rounded-xs border border-purple-500/30 bg-purple-500/10 p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-purple-200/90 select-text">
               <div className="text-2xs mb-1 flex items-center gap-1 font-semibold text-purple-400">
@@ -56,7 +54,6 @@ export function ContextView({ contextList }: ContextViewProperties) {
             </div>
           )}
 
-          {/* Content */}
           {(() => {
             let displayContent = "";
             if (typeof message.content === "string") {
@@ -85,7 +82,6 @@ export function ContextView({ contextList }: ContextViewProperties) {
             ) : null;
           })()}
 
-          {/* Tool Calls if any */}
           {message.tool_calls && message.tool_calls.length > 0 && (
             <div className="border-border/40 space-y-1 border-t pt-1">
               <span className="text-primary/80 text-2xs font-semibold tracking-wider uppercase">

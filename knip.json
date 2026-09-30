@@ -1,5 +1,4 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["src/agent/cli/*.ts"],
-  "ignore": ["src/components/ui/**"]
+  "entry": ["src/agent/cli/*.ts"]
 }

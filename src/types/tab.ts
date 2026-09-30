@@ -1,6 +1,8 @@
 import type { GovernorState } from "@/core/governor/types";
+import { EMPTY_GOVERNOR_STATE } from "@/core/governor/reducer";
 import type { InterceptorSettings } from "@/core/config/settings";
 import type { Profile } from "@/core/turn/profile";
+import type { QueuedPrompt } from "@/core/graph/turnControl";
 import {
   type Message,
   type ContextMessage,
@@ -16,6 +18,7 @@ export type { GovernorState } from "@/core/governor/types";
 
 export interface TabData {
   id: string;
+  kind?: "settings";
   title: string;
   projectId: string;
   threadId: string;
@@ -39,6 +42,9 @@ export interface TabData {
   contextTokens?: number;
   waitingOn?: string;
   profile?: Profile;
+  queuedPrompts?: QueuedPrompt[];
+  pauseState?: "pausing" | "paused";
+  queueHeld?: boolean;
 }
 
 export const INITIAL_TOOLS = AVAILABLE_TOOLS.map((t) => t.name);
@@ -51,32 +57,43 @@ export const THINKING_BUDGETS: Record<ThinkingLevel, number> = {
 };
 
 export const PLACEHOLDER_TAB_ID = "tab-1";
+export const DEFAULT_CHAT_TITLE = "New chat";
+export const SETTINGS_TAB_ID = "settings";
 
-export function createInitialTab(projectId: string = "proj-1"): TabData {
+export function createSettingsTab(projectId: string): TabData {
   return {
-    id: PLACEHOLDER_TAB_ID,
-    title: "Chat 1",
+    id: SETTINGS_TAB_ID,
+    kind: "settings",
+    title: "Settings",
     projectId,
-    threadId: "thread-1",
+    threadId: SETTINGS_TAB_ID,
     messages: [],
-    governorState: {
-      intent_stack: [],
-      completed_intents: [],
-      false_completions: [],
-    },
+    governorState: structuredClone(EMPTY_GOVERNOR_STATE),
     loading: false,
   };
 }
 
-export function createNewTab(projectId: string, index: number): TabData {
+export function createInitialTab(projectId: string = "proj-1"): TabData {
+  return {
+    id: PLACEHOLDER_TAB_ID,
+    title: DEFAULT_CHAT_TITLE,
+    projectId,
+    threadId: "thread-1",
+    messages: [],
+    governorState: structuredClone(EMPTY_GOVERNOR_STATE),
+    loading: false,
+  };
+}
+
+export function createNewTab(projectId: string): TabData {
   const newId = `session-${Date.now()}`;
   return {
     id: newId,
-    title: `Chat ${index}`,
+    title: DEFAULT_CHAT_TITLE,
     projectId,
     threadId: newId,
     messages: [],
-    governorState: { intent_stack: [], completed_intents: [], false_completions: [] },
+    governorState: structuredClone(EMPTY_GOVERNOR_STATE),
     loading: false,
   };
 }

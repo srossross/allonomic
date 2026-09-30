@@ -34,7 +34,7 @@ Allonomic bridges the power of dynamic LLM agents with rigorous external control
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18+) or [Bun](https://bun.sh/)
+- [Bun](https://bun.sh/)
 - [Rust](https://rustup.rs/) (for Tauri desktop app)
 - Google Gemini API key (`GEMINI_API_KEY` in `.env`)
 
@@ -43,13 +43,12 @@ Allonomic bridges the power of dynamic LLM agents with rigorous external control
 ```bash
 # Install dependencies
 bun install
-# or npm install
 ```
 
 ### Development
 
 ```bash
-# Run web client + agent development server
+# Run the Vite dev server (web client)
 bun run dev
 
 # Run desktop Tauri application

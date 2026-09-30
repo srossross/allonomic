@@ -1,4 +1,13 @@
-import type { DirEntry, FileStore, Paths, Runtime, Shell, ShellResult } from "@/core/ports";
+import type {
+  DirEntry,
+  FileStore,
+  Http,
+  HttpResponse,
+  Paths,
+  Runtime,
+  Shell,
+  ShellResult,
+} from "@/core/ports";
 import { dirname, basename, join } from "@/core/paths";
 
 function notFound(path: string): Error {
@@ -37,18 +46,13 @@ export class MemoryFileStore implements FileStore {
 
   async readDir(path: string): Promise<DirEntry[]> {
     if (!this.dirs.has(path)) throw notFound(path);
-    const names = new Set<string>();
     const entries: DirEntry[] = [];
-    const prefix = path.endsWith("/") ? path : `${path}/`;
     for (const dir of this.dirs) {
       if (dir === path || dirname(dir) !== path) continue;
-      const name = basename(dir);
-      if (names.has(name)) continue;
-      names.add(name);
-      entries.push({ name, isDirectory: true, isFile: false });
+      entries.push({ name: basename(dir), isDirectory: true, isFile: false });
     }
     for (const file of this.files.keys()) {
-      if (file.startsWith(prefix) && dirname(file) === path) {
+      if (dirname(file) === path) {
         entries.push({ name: basename(file), isDirectory: false, isFile: true });
       }
     }
@@ -76,11 +80,27 @@ export class ScriptedShell implements Shell {
   }
 }
 
+export class ScriptedHttp implements Http {
+  readonly calls: Array<{ url: string; json: unknown }> = [];
+  constructor(
+    private readonly handler: (url: string, json: unknown) => HttpResponse = () => ({
+      status: 200,
+      body: "",
+    })
+  ) {}
+
+  async post(url: string, json: unknown): Promise<HttpResponse> {
+    this.calls.push({ url, json });
+    return this.handler(url, json);
+  }
+}
+
 export function createMemoryRuntime(
   options: { resourceRoot?: string; platform?: string } = {}
-): Runtime & { fs: MemoryFileStore; shell: ScriptedShell } {
+): Runtime & { fs: MemoryFileStore; shell: ScriptedShell; http: ScriptedHttp } {
   const fs = new MemoryFileStore();
   const shell = new ScriptedShell();
+  const http = new ScriptedHttp();
   const resourceRoot = options.resourceRoot ?? "/resources";
   const paths: Paths = {
     resolve: async (...parts) => {
@@ -94,5 +114,5 @@ export function createMemoryRuntime(
     home: async () => "/home/test",
     appConfig: async () => "/appconfig",
   };
-  return { platform: options.platform ?? "darwin", fs, shell, paths };
+  return { platform: options.platform ?? "darwin", fs, shell, http, paths };
 }

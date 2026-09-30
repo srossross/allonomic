@@ -7,13 +7,8 @@ export type GovernorDispatch = (action: GovernorAction) => Record<string, unknow
 
 export interface ExitVerdictSignal {
   approved: boolean;
-  feedback?: string;
-  nextStep?: string;
 }
 
-/**
- * Creates atomic tools for the onUserPrompt mini-agent loop.
- */
 export function createGovernorPromptTools(
   dispatch: GovernorDispatch,
   signalFinish: (reasoning?: string) => void
@@ -108,9 +103,6 @@ export interface IntentBlocks {
   approve(): string | null;
 }
 
-/**
- * Creates tools for the onAgentFinish mini-agent loop.
- */
 export function createGovernorExitTools(
   dispatch: GovernorDispatch,
   blocks: IntentBlocks,
@@ -136,16 +128,11 @@ export function createGovernorExitTools(
   );
 
   const finish = tool(
-    async ({ approved, feedback = "", nextStep }) => {
+    async ({ approved }) => {
       const blocked = approved ? blocks.approve() : null;
       if (blocked) return { status: "blocked", message: blocked };
-      signalFinish({ approved, feedback, nextStep });
-      return {
-        status: "finished",
-        approved,
-        feedback,
-        nextStep,
-      };
+      signalFinish({ approved });
+      return { status: "finished", approved };
     },
     {
       name: "finish",
@@ -155,16 +142,6 @@ export function createGovernorExitTools(
           .boolean()
           .describe(
             "true if at least one intent was satisfied or progress was made without violating rules; false if no progress was made or rules were broken."
-          ),
-        feedback: z
-          .string()
-          .optional()
-          .describe("Actionable correction feedback to give yourself if approved is false."),
-        nextStep: z
-          .string()
-          .optional()
-          .describe(
-            "Optional next action to take if unfulfilled intents remain on the active stack."
           ),
       }),
     }

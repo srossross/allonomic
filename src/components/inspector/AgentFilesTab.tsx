@@ -5,6 +5,7 @@ import type { ContextFileAgent } from "@/core/turn/events";
 import { formatClock } from "@/core/turn/consoleProjection";
 import { classifyPath, type PathOrigin, type PathRoots } from "@/core/contextFiles";
 import { fetchPathRootsApi } from "@/agent/api";
+import { toggleInSet } from "@/lib/toggleInSet";
 
 const AGENTS: { agent: ContextFileAgent; label: string; isInterceptor: boolean }[] = [
   { agent: "worker", label: "Worker", isInterceptor: false },
@@ -19,19 +20,20 @@ const ORIGIN_BADGE: Record<PathOrigin, { label: string; className: string }> = {
   "/": { label: "/", className: "bg-muted text-muted-foreground" },
 };
 
-function usePathRoots(workspacePath?: string): PathRoots {
+function usePathRoots(workspacePath?: string): { roots: PathRoots; error?: string } {
   const [roots, setRoots] = useState<PathRoots>({});
+  const [error, setError] = useState<string>();
   useEffect(() => {
     const load = async () => {
       try {
         setRoots(await fetchPathRootsApi());
-      } catch (error) {
-        console.warn("Failed to resolve path roots:", error);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : String(loadError));
       }
     };
     void load();
   }, []);
-  return { ...roots, ws: workspacePath };
+  return { roots: { ...roots, ws: workspacePath }, error };
 }
 
 function FileRow({ file, roots }: { file: AgentFileRow; roots: PathRoots }) {
@@ -65,20 +67,20 @@ export function AgentFilesTab({
   agentFiles: AgentFileRow[];
   workspacePath?: string;
 }) {
-  const roots = usePathRoots(workspacePath);
+  const { roots, error } = usePathRoots(workspacePath);
   const [collapsed, setCollapsed] = useState<Set<ContextFileAgent>>(new Set());
   const missingCount = agentFiles.filter((file) => file.missing).length;
 
   const toggle = (agent: ContextFileAgent) =>
-    setCollapsed((previous) => {
-      const next = new Set(previous);
-      if (next.has(agent)) next.delete(agent);
-      else next.add(agent);
-      return next;
-    });
+    setCollapsed((previous) => toggleInSet(previous, agent));
 
   return (
     <div className="space-y-2">
+      {error && (
+        <div className="text-destructive p-3 font-mono text-xs">
+          Failed to resolve path roots: {error}
+        </div>
+      )}
       <div className="flex items-center justify-between px-1 text-xs">
         <span className="text-muted-foreground text-2xs font-mono font-semibold tracking-wider uppercase">
           Agent Files ({agentFiles.length})

@@ -8,6 +8,7 @@ export interface Message {
   thinkingDurationSeconds?: number;
   toolCalls?: ToolCallInfo[];
   isError?: boolean;
+  isQueued?: boolean;
   brief?: { interceptor: string; text: string; doneWhen: string[] };
 }
 

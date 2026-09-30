@@ -1,6 +1,6 @@
 ## Pre-Tool Check
 
-The worker proposed the tool call below. Check it against this manual and the Project Rules.
+The agent proposed the tool call below. Check it against this manual and the Rules.
 
 - It follows the rules → call `allow()`.
 - It breaks a rule → call `deny({ reason })`. The reason is the lesson: name the rule that was broken and give the exact call to make instead.

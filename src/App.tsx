@@ -1,13 +1,19 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ProjectsSidebar } from "@/components/sidebar/ProjectsSidebar";
 import { TabBar } from "@/components/tabs/TabBar";
 import { TabLoadErrorBanner } from "@/components/tabs/TabLoadErrorBanner";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { composerPhase } from "@/components/chat/composerPhase";
+import { findPendingPrompt } from "@/components/chat/pendingPrompt";
 import { IntentsPanel } from "@/components/inspector/IntentsPanel";
 import { useTabsManager } from "@/hooks/useTabsManager";
 import { usePromptResponses } from "@/hooks/usePromptResponses";
 import { useProjectManager } from "@/hooks/useProjectManager";
 import { fetchModelsApi } from "@/agent/api";
+import { withAlert } from "@/lib/alertError";
 import {
   DEFAULT_EXECUTION_MODE,
   DEFAULT_GOVERNOR_MODE,
@@ -26,26 +32,18 @@ function App() {
     activeProjectId,
     activeProject,
     setActiveProjectId,
-    handleAddProject,
     handleRenameProject,
     handleDeleteProject,
-    globalDirPickerRef,
+    triggerDirPicker,
   } = useProjectManager(() => newTabRef.current());
 
   useEffect(() => {
     let isCancelled = false;
     async function loadModels() {
-      try {
-        const loaded = await fetchModelsApi(activeProject?.path);
-        if (!isCancelled) setModels(loaded);
-      } catch (error) {
-        console.error("[Models] Failed to load models:", error);
-        globalThis.alert(
-          "Failed to load models: " + (error instanceof Error ? error.message : String(error))
-        );
-      }
+      const loaded = await fetchModelsApi(activeProject?.path);
+      if (!isCancelled) setModels(loaded);
     }
-    void loadModels();
+    void withAlert("Load models", loadModels);
     return () => {
       isCancelled = true;
     };
@@ -68,10 +66,16 @@ function App() {
     handleCycleGovernorMode,
     handleSendMessage,
     handleStopMessage,
+    handlePause,
+    handleResume,
+    handleRemoveQueued,
+    handlePopQueued,
+    handleRetry,
     handleClearConsole,
     handleToggleContext,
     handleToggleTool,
     handleSetAllTools,
+    handleSettingsSaved,
   } = useTabsManager(activeProject);
 
   const { handleRespondToPrompt } = usePromptResponses({ activeProject, activeTab });
@@ -79,6 +83,15 @@ function App() {
   useEffect(() => {
     newTabRef.current = handleNewTab;
   }, [handleNewTab]);
+
+  const closeActiveTabRef = useRef(() => {});
+  useEffect(() => {
+    const unlisten = listen("close-tab", () => closeActiveTabRef.current());
+    void withAlert("Listen for close-tab", () => unlisten);
+    return () => {
+      void withAlert("Stop listening for close-tab", async () => (await unlisten)());
+    };
+  }, []);
 
   const projectStates = useMemo(() => {
     const states: Record<
@@ -102,53 +115,37 @@ function App() {
     [tabs, activeProject?.id]
   );
 
+  useEffect(() => {
+    closeActiveTabRef.current =
+      activeProjectTabs.length <= 1
+        ? () => void withAlert("Close window", () => getCurrentWindow().close())
+        : () => handleCloseTab(activeTabId);
+  }, [activeProjectTabs.length, handleCloseTab, activeTabId]);
+
   return (
     <div className="bg-background text-foreground flex h-screen w-screen overflow-hidden antialiased">
-      {/* Hidden directory input for fallback */}
-      <input
-        ref={globalDirPickerRef}
-        type="file"
-        // @ts-expect-error webkitdirectory is standard for directory picker
-        webkitdirectory="true"
-        directory=""
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          const files = e.target.files;
-          if (files && files.length > 0) {
-            const firstFile = files[0];
-            const relativePath = firstFile.webkitRelativePath || "";
-            const dirName = relativePath.split("/", 1)[0] || firstFile.name || "New Project";
-            handleAddProject(dirName, dirName);
-          }
-          e.target.value = "";
-        }}
-      />
-
-      {/* LEFT PANEL: Projects sidebar */}
       <ProjectsSidebar
         projects={projects}
         activeProjectId={activeProjectId}
         onSelectProject={setActiveProjectId}
-        onAddProject={handleAddProject}
+        onOpenDirPicker={() => void withAlert("Open folder", triggerDirPicker)}
         onRenameProject={handleRenameProject}
         onDeleteProject={handleDeleteProject}
         projectStates={projectStates}
       />
 
-      {/* RIGHT MAIN AREA: Tabs across top, then 60/40 panels */}
       <div className="flex h-full min-w-0 flex-1 flex-col">
-        {/* Workspace: 60% Chat / 40% Intents (scoped to active tab) */}
         <main className="flex min-h-0 w-full flex-1">
           <section className="border-border/80 flex h-full w-3/5 min-w-0 flex-col border-r">
             <TabBar
               tabs={activeProjectTabs.map((t) => ({
                 id: t.id,
                 title: t.title,
-                projectId: t.projectId,
                 showContext: t.showContext,
                 loading: t.loading,
                 hasUnread: t.hasUnread,
+                isPaused: !!t.pauseState,
+                needsInput: findPendingPrompt(t.messages) !== null,
               }))}
               activeTabId={activeTabId}
               onSelectTab={setActiveTabId}
@@ -162,32 +159,50 @@ function App() {
                 onCloseTab={() => handleCloseTab(activeTab.id)}
               />
             )}
-            <ChatPanel
-              messages={activeTab.messages}
-              contextMessages={activeTab.contextMessages}
-              showContext={activeTab.showContext}
-              onToggleContext={() => handleToggleContext(activeTab.id)}
-              loading={activeTab.loading}
-              waitingOn={activeTab.waitingOn}
-              onSendMessage={handleSendMessage}
-              onStopMessage={handleStopMessage}
-              selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
-              onSelectModel={handleSelectModel}
-              models={models}
-              contextTokens={activeTab.contextTokens}
-              thinkingLevel={activeTab.thinkingLevel || "Low"}
-              onSelectThinkingLevel={handleSelectThinkingLevel}
-              executionMode={activeTab.executionMode || DEFAULT_EXECUTION_MODE}
-              onSelectExecutionMode={handleSelectExecutionMode}
-              onCycleExecutionMode={handleCycleExecutionMode}
-              hasNetworkAccess={activeTab.hasNetworkAccess ?? false}
-              onToggleHasNetworkAccess={handleToggleHasNetworkAccess}
-              governorMode={activeTab.governorMode ?? DEFAULT_GOVERNOR_MODE}
-              onCycleGovernorMode={handleCycleGovernorMode}
-              isTeacherEnabled={activeTab.teacherEnabled ?? true}
-              onToggleTeacher={handleToggleTeacher}
-              onRespondToPrompt={handleRespondToPrompt}
-            />
+            {activeTab.kind === "settings" ? (
+              <SettingsPanel
+                workspacePath={activeProject?.path}
+                sessions={activeProjectTabs
+                  .filter((t) => t.kind !== "settings")
+                  .map((t) => ({ id: t.id, title: t.title }))}
+                models={models}
+                onSaved={handleSettingsSaved}
+              />
+            ) : (
+              <ChatPanel
+                sessionId={activeTab.id}
+                messages={activeTab.messages}
+                contextMessages={activeTab.contextMessages}
+                showContext={activeTab.showContext}
+                loading={activeTab.loading}
+                phase={composerPhase(activeTab)}
+                queuedPrompts={activeTab.queuedPrompts}
+                waitingOn={activeTab.waitingOn}
+                onSendMessage={handleSendMessage}
+                onStopMessage={() => void withAlert("Stop", handleStopMessage)}
+                onPause={handlePause}
+                onResume={handleResume}
+                onRemoveQueued={handleRemoveQueued}
+                onPopQueued={handlePopQueued}
+                onRetry={() => void withAlert("Retry", handleRetry)}
+                selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
+                onSelectModel={handleSelectModel}
+                models={models}
+                contextTokens={activeTab.contextTokens}
+                thinkingLevel={activeTab.thinkingLevel || "Low"}
+                onSelectThinkingLevel={handleSelectThinkingLevel}
+                executionMode={activeTab.executionMode || DEFAULT_EXECUTION_MODE}
+                onSelectExecutionMode={handleSelectExecutionMode}
+                onCycleExecutionMode={handleCycleExecutionMode}
+                hasNetworkAccess={activeTab.hasNetworkAccess ?? false}
+                onToggleHasNetworkAccess={handleToggleHasNetworkAccess}
+                governorMode={activeTab.governorMode ?? DEFAULT_GOVERNOR_MODE}
+                onCycleGovernorMode={handleCycleGovernorMode}
+                isTeacherEnabled={activeTab.teacherEnabled ?? true}
+                onToggleTeacher={handleToggleTeacher}
+                onRespondToPrompt={handleRespondToPrompt}
+              />
+            )}
           </section>
 
           <section className="flex h-full w-2/5 min-w-0 flex-col">

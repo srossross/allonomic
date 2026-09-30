@@ -7,7 +7,12 @@ import { buildHistory } from "../src/core/history";
 import { createTurnEventLog } from "../src/core/turn/eventLog";
 import { saveTurnEvents } from "../src/core/telemetry/session";
 import type { TurnEvent } from "../src/core/turn/events";
-import { FakeChatModel, toolCall, type ScriptedTurn } from "./helpers/fakeChatModel";
+import {
+  FailingOnceModel,
+  FakeChatModel,
+  toolCall,
+  type ScriptedTurn,
+} from "./helpers/fakeChatModel";
 
 const SESSION_DIR = "/w/.allonomic/sessions/s1";
 const EVENTS_1 = `${SESSION_DIR}/turns/001/events.yml`;
@@ -135,6 +140,52 @@ describe("crash recovery", () => {
     expect(runtime.shell.calls).toHaveLength(0);
     const result = events.find((e) => e.type === "tool_result");
     expect(result?.type === "tool_result" && result.content).toContain("Not run");
+  });
+
+  it("try again with no unanswered calls resumes a turn that crashed before any step", async () => {
+    const runtime = createMemoryRuntime();
+    const { sink, events } = createTurnEventLog(1, []);
+    sink.emit({ type: "turn_started", threadId: "s1", prompt: "build" });
+    await saveTurnEvents(runtime.fs, SESSION_DIR, 1, events);
+    const session = await rehydrateSession(runtime.fs, "/w", "s1");
+    const model = new FakeChatModel(["resumed"]);
+    const runner = new AgentRunner({
+      runtime,
+      workspaceDir: "/w",
+      sessionId: "s1",
+      initialTurnIndex: session.nextTurnIndex,
+      executionMode: "restricted",
+      createModel: () => model,
+    });
+
+    const result = await runner.recover("s1", [], { history: buildHistory(session.messages) });
+
+    expect(result.finalResponse).toBe("resumed");
+    expect(model.calls[0].map((m) => m._getType())).toEqual(["system", "human"]);
+  });
+
+  it("try again after a live failure resumes from the failed step", async () => {
+    const runtime = createMemoryRuntime();
+    const model = new FailingOnceModel(
+      [{ toolCalls: [toolCall("shell_1_project_read_only", { command: "ls" }, "c1")] }, "done"],
+      2
+    );
+    const runner = new AgentRunner({
+      runtime,
+      workspaceDir: "/w",
+      sessionId: "s1",
+      initialTurnIndex: 1,
+      executionMode: "restricted",
+      createModel: () => model,
+    });
+    await expect(runner.run("list", "s1")).rejects.toThrow("boom");
+    const session = await rehydrateSession(runtime.fs, "/w", "s1");
+
+    const result = await runner.recover("s1", [], { history: buildHistory(session.messages) });
+
+    expect(result.finalResponse).toBe("done");
+    expect(runtime.shell.calls).toHaveLength(1);
+    expect(model.calls.at(-1)?.map((m) => m._getType())).toEqual(["system", "human", "ai", "tool"]);
   });
 
   it("calls closed by a failed turn are not reported as unanswered", async () => {

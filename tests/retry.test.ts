@@ -71,11 +71,12 @@ describe("Retry Utility & Rate Limit Handling Flow", () => {
       throw new Error("429 Too Many Requests");
     };
 
-    expect(
+    await expect(
       invokeWithRetry(operation, {
         maxRetries: 3,
         initialDelayMs: 1000,
         signal: controller.signal,
+        onRetry: () => {},
       })
     ).rejects.toThrow("Cancelled by user");
 
@@ -90,7 +91,7 @@ describe("Retry Utility & Rate Limit Handling Flow", () => {
       throw new Error("401 Unauthorized: Invalid key");
     };
 
-    expect(
+    await expect(
       invokeWithRetry(operation, {
         maxRetries: 3,
         initialDelayMs: 10,

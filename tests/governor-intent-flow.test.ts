@@ -2,10 +2,7 @@ import { describe, it, expect } from "bun:test";
 import { createGovernorPromptTools } from "../src/core/governor/tools";
 import { createGovernorFalseCompletionTools } from "../src/core/governor/falseCompletionTools";
 import { localGovernor } from "./helpers/turnContext";
-
-function parse(result: unknown) {
-  return typeof result === "string" ? JSON.parse(result) : result;
-}
+import { parse } from "./helpers/governorFixtures";
 
 describe("Governor Intent & State Flow", () => {
   it("initializes empty and accepts pushed intents", async () => {
@@ -148,10 +145,10 @@ describe("Governor Intent & State Flow", () => {
       await addFalseCompletion.invoke({
         intent_id: "itnt_a",
         summary: "Image styled with ad hoc CSS",
-        relies_on: "Inline styles are acceptable in this project",
-        completes_as: "Agent adds the image with inline styles and reports done",
-        false_because: "User expected the existing reusable box style",
-        directive: "Use the existing reusable box style",
+        completes_as: "The image added with inline styles",
+        false_because: "The project has a reusable box style the agent did not use",
+        check: "Search the stylesheets for an existing box class",
+        evidence: { source: "styles.css", quote: ".box { width: 100% }" },
       })
     );
     expect(added.status).toBe("created");
@@ -159,7 +156,7 @@ describe("Governor Intent & State Flow", () => {
     expect(created).toMatchObject({
       id: added.id,
       intent_id: "itnt_a",
-      evidence: null,
+      evidence: { source: "styles.css", quote: ".box { width: 100% }" },
       resolution: null,
       resolution_reason: null,
     });
@@ -179,10 +176,9 @@ describe("Governor Intent & State Flow", () => {
       await addFalseCompletion.invoke({
         intent_id: "itnt_a",
         summary: "Box size guessed",
-        relies_on: "Default size is fine",
-        completes_as: "Image added at default size",
-        false_because: "User wanted it to match the grid",
-        directive: "Size the image to match the grid",
+        completes_as: "The image added at its default size",
+        false_because: "The image does not match the grid",
+        check: "Compare the image width with the grid column width",
       })
     );
     const evidence = { source: "styles.css", quote: ".box { width: 100% }" };
@@ -260,11 +256,9 @@ describe("Governor Intent & State Flow", () => {
     await addFalseCompletion.invoke({
       intent_id: "itnt_a",
       summary: "Verified against the wrong code",
-      relies_on: "The local checkout is the PR head commit Copilot reviewed",
-      completes_as: "Agent verifies each comment against the local checkout and reports verdicts",
-      false_because: "Local checkout may not be the PR head commit Copilot reviewed",
-      detect_by: "git rev-parse HEAD vs gh pr view --json headRefOid",
-      directive: "Check out the PR head commit before verifying comments",
+      completes_as: "Verdicts for each comment against the local checkout",
+      false_because: "The local checkout may not be the PR head commit Copilot reviewed",
+      check: "Compare git rev-parse HEAD with gh pr view --json headRefOid",
     });
     const second = parse(await finish.invoke({}));
     expect(second.status).toBe("error");

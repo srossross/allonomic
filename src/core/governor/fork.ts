@@ -9,8 +9,11 @@ import type { StructuredTool } from "@langchain/core/tools";
 import { invokeWithRetry } from "../retry";
 import { invokeWaiting, type WaitingTarget } from "../turn/waiting";
 import { sanitizeMessagesForModel } from "../graph/thinking";
+import { createLogger } from "../log";
 
 const GOVERNOR_MAX_STEPS = 50;
+
+const forkLog = createLogger("governor.fork");
 
 export interface GovernorModel {
   invoke(messages: BaseMessage[]): Promise<AIMessage | AIMessageChunk>;
@@ -25,6 +28,7 @@ export interface ForkLoopOptions<T> {
   nudge?: string;
   unknownTool?: (name: string) => string;
   waiting?: WaitingTarget;
+  sessionId?: string;
 }
 
 /**
@@ -39,17 +43,33 @@ export async function loopFork<T>({
   decision,
   nudge,
   waiting,
+  sessionId,
   unknownTool = (name) =>
     `Error: you do not have the tool ${name}. The tools used in the conversation above have been removed.`,
 }: ForkLoopOptions<T>): Promise<{ decided: T; scratchpad: BaseMessage[] }> {
+  const log = sessionId ? forkLog.child({ sessionId }) : forkLog;
   for (let step = 0; step < GOVERNOR_MAX_STEPS; step++) {
     const decided = decision();
-    if (decided !== null) return { decided, scratchpad };
+    if (decided !== null) {
+      log.debug({ label, step }, "decided");
+      return { decided, scratchpad };
+    }
 
     const invoke = () => model.invoke(sanitizeMessagesForModel(scratchpad));
+    const startedAt = Date.now();
+    log.debug({ label, step, messages: scratchpad.length }, "invoke start");
     const response = await (waiting
       ? invokeWaiting(waiting, label, invoke)
       : invokeWithRetry(invoke));
+    log.debug(
+      {
+        label,
+        step,
+        durationMs: Date.now() - startedAt,
+        toolCalls: (response.tool_calls ?? []).map((call) => call.name),
+      },
+      "invoke done"
+    );
     scratchpad.push(response);
 
     if (!response.tool_calls || response.tool_calls.length === 0) {
@@ -62,11 +82,13 @@ export async function loopFork<T>({
       const matchingTool = tools.find((t) => t.name === call.name);
       let result: unknown;
       if (matchingTool) {
+        log.debug({ label, step, tool: call.name }, "tool start");
         try {
           result = await matchingTool.invoke(call.args);
         } catch (error) {
           result = `Error: ${error instanceof Error ? error.message : String(error)}`;
         }
+        log.debug({ label, step, tool: call.name }, "tool done");
       } else {
         result = unknownTool(call.name);
       }
@@ -82,5 +104,6 @@ export async function loopFork<T>({
 
   const decided = decision();
   if (decided !== null) return { decided, scratchpad };
+  log.error({ label, steps: GOVERNOR_MAX_STEPS }, "no decision");
   throw new Error(`${label} fork made no decision within ${GOVERNOR_MAX_STEPS} steps`);
 }

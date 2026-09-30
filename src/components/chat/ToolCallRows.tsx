@@ -1,5 +1,6 @@
 import { ChevronRight, FileText, FileCode, Folder, Loader2, Wrench, X } from "lucide-react";
 import { isShellTool, type ToolCallInfo } from "@/types";
+import { EditFileDiff } from "./EditFileDiff";
 import { DIR_LIST_TOOLS, exploreSummary, FILE_READ_TOOLS, type ToolEntry } from "./exploreGroups";
 import { shellCallFailed } from "./shellStatus";
 import { ShellDetails, ShellSummary } from "./ShellToolCall";
@@ -104,6 +105,7 @@ export function ToolCallRow({
 }) {
   const isShell = isShellTool(tc);
   const isFileTool = FILE_READ_TOOLS.has(tc.name) || DIR_LIST_TOOLS.has(tc.name);
+  const isEdit = tc.name === "edit_file";
   return (
     <div>
       <button
@@ -127,7 +129,6 @@ export function ToolCallRow({
         )}
       </button>
 
-      {/* Rejected Badge */}
       {tc.status === "rejected" && (
         <div className="border-destructive/30 bg-destructive/5 text-destructive my-1 flex items-center gap-1.5 rounded-xs border px-2 py-1 text-xs">
           <X className="text-destructive size-3" />
@@ -149,7 +150,8 @@ export function ToolCallRow({
           )}
           {isShell && <ShellDetails tc={tc} />}
           {isFileTool && tc.result !== undefined && <FileContents tc={tc} />}
-          {!isShell && !isFileTool && tc.args !== undefined && (
+          {isEdit && <EditFileDiff tc={tc} />}
+          {!isShell && !isFileTool && !isEdit && tc.args !== undefined && (
             <div>
               <div className="text-muted-foreground text-2xs font-semibold tracking-wider uppercase">
                 Parameters

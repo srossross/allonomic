@@ -10,9 +10,11 @@ interface ToolRowProperties {
 }
 
 function ToolToggleSwitch({
+  label,
   checked,
   onChange,
 }: {
+  label: string;
   checked: boolean;
   onChange: (e: React.MouseEvent) => void;
 }) {
@@ -21,6 +23,7 @@ function ToolToggleSwitch({
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={label}
       onClick={onChange}
       className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-150 focus-visible:outline-none ${
         checked ? "bg-primary" : "bg-muted-foreground/30 hover:bg-muted-foreground/40"
@@ -89,6 +92,7 @@ export function ToolRow({
 
         <div className="flex shrink-0 items-center pl-2">
           <ToolToggleSwitch
+            label={`Enable ${tool.name}`}
             checked={isEnabled}
             onChange={(e) => {
               e.stopPropagation();

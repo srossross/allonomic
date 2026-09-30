@@ -18,20 +18,20 @@ describe("inspector tab order", () => {
       "intent",
       "injectors",
       "files",
-      "settings",
+      "session",
       "profile",
     ]);
   });
 
   it("touch moves a tab to most recent", () => {
-    expect(touchTab(normalizeTabOrder([]), "settings")[0]).toBe("settings");
+    expect(touchTab(normalizeTabOrder([]), "session")[0]).toBe("session");
   });
 
   it("shows the 3 most recent, most recent leftmost; rest most-recent-first", () => {
-    const order = normalizeTabOrder(["tools", "intent", "console", "settings"]);
+    const order = normalizeTabOrder(["tools", "intent", "console", "session"]);
     expect(splitTabs(order)).toEqual({
       visible: ["tools", "intent", "console"],
-      overflow: ["settings", "injectors", "files", "profile"],
+      overflow: ["session", "injectors", "files", "profile"],
     });
   });
 

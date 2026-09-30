@@ -228,6 +228,23 @@ function rows(event: TurnEvent): Row[] {
     case "waiting": {
       return [];
     }
+    case "paused": {
+      return [{ type: "warning", badge: "PAUSE", badgeVariant: "amber", summary: "Paused" }];
+    }
+    case "resumed": {
+      return [{ type: "warning", badge: "PAUSE", badgeVariant: "amber", summary: "Resumed" }];
+    }
+    case "prompt_delivered": {
+      return [
+        {
+          type: "user_prompt",
+          badge: "USER",
+          badgeVariant: "sky",
+          summary: `(queued) ${event.text}`,
+          details: event,
+        },
+      ];
+    }
     case "exit_retry": {
       return [
         {
@@ -238,6 +255,10 @@ function rows(event: TurnEvent): Row[] {
           details: event,
         },
       ];
+    }
+    case "warning": {
+      const summary = `${event.source}: ${event.message}`;
+      return [{ type: "warning", badge: "WARN", badgeVariant: "amber", summary, details: event }];
     }
     case "turn_completed": {
       return [

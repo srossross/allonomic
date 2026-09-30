@@ -40,14 +40,11 @@ async function main() {
     const errorCode =
       error && typeof error === "object" && "code" in error ? String(error.code) : "";
     const errorMessage = error instanceof Error ? error.message : String(error);
-    if (
-      errorName === "AbortError" ||
-      errorCode === "ERR_USE_AFTER_CLOSE" ||
-      errorMessage.includes("closed")
-    ) {
+    if (errorName === "AbortError" || errorCode === "ERR_USE_AFTER_CLOSE") {
       console.log("\nSession closed.");
     } else {
       console.error("\nError:", errorMessage);
+      process.exitCode = 1;
     }
   } finally {
     rl.close();

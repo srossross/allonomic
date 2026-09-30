@@ -22,10 +22,12 @@ import {
   extractThinking,
   messageText,
   sanitizeMessagesForModel,
+  stripThinking,
   thoughtSignatureFor,
 } from "./thinking";
 import { readPipelineContext, type AgentInterceptor } from "./types";
-import { preToolDenial, toolContent, withPostToolLessons } from "./interceptorHooks";
+import { preToolDenial, withPostToolLessons } from "./interceptorHooks";
+import { emitToolResults } from "./recovery";
 
 type State = typeof MessagesAnnotation.State;
 
@@ -39,16 +41,40 @@ export function workerConversation(systemPrompt: string, messages: BaseMessage[]
 
 function afterAgentCondition(state: State) {
   const lastMessage = state.messages.at(-1);
-  return lastMessage &&
-    lastMessage._getType() === "ai" &&
-    Reflect.get(lastMessage, "tool_calls")?.length
+  return lastMessage && lastMessage.type === "ai" && Reflect.get(lastMessage, "tool_calls")?.length
     ? "tools"
     : "exit_interceptors";
 }
 
 function afterExitCondition(state: State) {
   const lastMessage = state.messages.at(-1);
-  return lastMessage && lastMessage._getType() === "human" ? "agent" : "__end__";
+  return lastMessage && lastMessage.type === "human" ? "inbox" : "__end__";
+}
+
+function afterInboxCondition(state: State) {
+  const lastMessage = state.messages.at(-1);
+  return lastMessage?.type === "human" && lastMessage.additional_kwargs.queueId
+    ? "entry_interceptors"
+    : "agent";
+}
+
+async function inboxNode(_state: State, config: LangGraphRunnableConfig) {
+  const context = readPipelineContext(config);
+  const { control } = context;
+  if (!control) return {};
+  if (control.isPaused) {
+    context.events.emit({ type: "paused" });
+    await control.waitWhilePaused(config.signal);
+    context.events.emit({ type: "resumed" });
+  }
+  const delivered = control.drain();
+  for (const { id, text } of delivered)
+    context.events.emit({ type: "prompt_delivered", queueId: id, text });
+  return {
+    messages: delivered.map(
+      ({ id, text }) => new HumanMessage({ content: text, additional_kwargs: { queueId: id } })
+    ),
+  };
 }
 
 export function createCompiledWorkflow(
@@ -60,19 +86,22 @@ export function createCompiledWorkflow(
 ) {
   const modelInput = (state: State): BaseMessage[] =>
     workerConversation(systemPrompt, state.messages);
+  const interceptorInput = (state: State): BaseMessage[] => [
+    new SystemMessage(systemPrompt),
+    ...stripThinking(state.messages),
+  ];
 
   const entryInterceptorsNode = async (state: State, config: LangGraphRunnableConfig) => {
     const context = readPipelineContext(config);
     const lastMessage = state.messages.at(-1);
-    if (!lastMessage || lastMessage._getType() !== "human") return {};
+    if (!lastMessage || lastMessage.type !== "human") return {};
 
     const briefs: string[] = [];
     for (const interceptor of interceptors) {
-      const brief = await interceptor.onUserPrompt?.(modelInput(state), context);
+      const brief = await interceptor.onUserPrompt?.(interceptorInput(state), context);
       if (brief) briefs.push(`[${interceptor.name}]: ${brief}`);
     }
-    if (briefs.length === 0) return {};
-    return { messages: [new HumanMessage(briefs.join("\n\n"))] };
+    return briefs.length === 0 ? {} : { messages: [new HumanMessage(briefs.join("\n\n"))] };
   };
 
   const callModel = async (state: State, config: LangGraphRunnableConfig) => {
@@ -146,15 +175,7 @@ export function createCompiledWorkflow(
       .map((call) => results.find((m) => m.tool_call_id === call.id))
       .filter((m) => m !== undefined);
 
-    for (const message of messages) {
-      context.events.emit({
-        type: "tool_result",
-        toolCallId: message.tool_call_id,
-        name: message.name ?? "tool",
-        content: toolContent(message),
-        status: message.status,
-      });
-    }
+    emitToolResults(context.events, messages);
     return { messages };
   };
 
@@ -164,9 +185,9 @@ export function createCompiledWorkflow(
 
     for (const interceptor of interceptors) {
       if (!interceptor.onAgentFinish) continue;
-      const verdict = await interceptor.onAgentFinish(modelInput(state), context);
+      const verdict = await interceptor.onAgentFinish(interceptorInput(state), context);
       if (!verdict.allowFinish)
-        feedback.push(`\n[${interceptor.name} Feedback]: ${verdict.feedback}`);
+        feedback.push(`\n[${interceptor.name} Feedback]: ${verdict.feedback ?? ""}`);
     }
 
     if (feedback.length === 0) return {};
@@ -185,12 +206,14 @@ export function createCompiledWorkflow(
     .addNode("entry_interceptors", entryInterceptorsNode)
     .addNode("agent", callModel)
     .addNode("tools", toolsNode)
+    .addNode("inbox", inboxNode)
     .addNode("exit_interceptors", exitInterceptorsNode)
     .addEdge(START, "entry_interceptors")
     .addEdge("entry_interceptors", "agent")
     .addConditionalEdges("agent", afterAgentCondition, ["tools", "exit_interceptors"])
-    .addEdge("tools", "agent")
-    .addConditionalEdges("exit_interceptors", afterExitCondition, ["agent", "__end__"]);
+    .addEdge("tools", "inbox")
+    .addConditionalEdges("inbox", afterInboxCondition, ["entry_interceptors", "agent"])
+    .addConditionalEdges("exit_interceptors", afterExitCondition, ["inbox", "__end__"]);
 
   return workflow.compile({ checkpointer });
 }

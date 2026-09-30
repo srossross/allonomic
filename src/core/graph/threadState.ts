@@ -6,12 +6,12 @@ import {
   ToolMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
-import { createLogger } from "../log";
+import { createLogger, type Logger } from "../log";
 import type { HistoryEntry } from "../history";
 import type { CompiledWorkflow } from "./workflow";
 import { thoughtSignatureKwargs } from "./thinking";
 
-const log = createLogger("pipeline/threadState");
+const defaultLog = createLogger("pipeline/threadState");
 
 export async function messageCount(compiled: CompiledWorkflow, threadId: string): Promise<number> {
   const state = await compiled.getState({ configurable: { thread_id: threadId } });
@@ -60,23 +60,24 @@ export function historyToMessages(history: HistoryEntry[]): BaseMessage[] {
 export async function rehydrateHistory(
   compiled: CompiledWorkflow,
   threadId: string,
-  history?: HistoryEntry[]
+  history?: HistoryEntry[],
+  log: Logger = defaultLog
 ): Promise<void> {
   if (!history || history.length === 0) {
-    log.debug("rehydrateHistory:skip:emptyHistory", { threadId });
+    log.debug({ threadId }, "rehydrateHistory:skip:emptyHistory");
     return;
   }
   const existing = await messageCount(compiled, threadId);
   if (existing > 0) {
-    log.debug("rehydrateHistory:skip:stateExists", { threadId, messageCount: existing });
+    log.debug({ threadId, messageCount: existing }, "rehydrateHistory:skip:stateExists");
     return;
   }
-  log.info("rehydrateHistory:seeding", { threadId, historyLength: history.length });
+  log.info({ threadId, historyLength: history.length }, "rehydrateHistory:seeding");
 
   const pastMessages = historyToMessages(history);
   await compiled.updateState({ configurable: { thread_id: threadId } }, { messages: pastMessages });
-  log.info("rehydrateHistory:seeded", {
-    threadId,
-    messageCount: await messageCount(compiled, threadId),
-  });
+  log.info(
+    { threadId, messageCount: await messageCount(compiled, threadId) },
+    "rehydrateHistory:seeded"
+  );
 }

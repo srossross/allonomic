@@ -1,11 +1,12 @@
 import { readTextFile, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
 import { join, resolve, dirname } from "@tauri-apps/api/path";
 import YAML from "yaml";
-import { getAppConfigDir } from "./configPaths";
+import { tauriRuntime } from "../adapters/tauri/runtime";
 import type { WorkspacesConfig, WorkspaceItem } from "../types/persistence";
+import { isNotFound } from "../core/fsErrors";
 
 async function getWorkspacesFilePath(): Promise<string> {
-  const configDir = await getAppConfigDir();
+  const configDir = await tauriRuntime.paths.appConfig();
   return await join(configDir, "workspaces.yml");
 }
 
@@ -69,16 +70,9 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
         }
 
         if (validWorkspaces.length > 0) {
-          // If activeWorkspaceId is a legacy 'proj-xxx' id, map it to the path if found
-          let resolvedActiveId = activeWorkspaceId;
-          if (activeWorkspaceId && activeWorkspaceId.startsWith("proj-")) {
-            // We can't map it easily since legacy format didn't have path in active_workspace_id.
-            // But if we upgraded it, we might just default to the first one.
-            const legacyItem = validWorkspaces.find(
-              (w) => w.id === activeWorkspaceId || w.path === activeWorkspaceId
-            );
-            resolvedActiveId = legacyItem ? legacyItem.path : validWorkspaces[0].path;
-          }
+          const resolvedActiveId = activeWorkspaceId?.startsWith("proj-")
+            ? undefined
+            : activeWorkspaceId;
 
           return {
             activeWorkspaceId: resolvedActiveId || validWorkspaces[0].path,
@@ -88,14 +82,8 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
       }
     }
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    // Ignore "file not found" errors on first run
-    if (
-      !errorMsg.includes("No such file") &&
-      !errorMsg.includes("os error 2") &&
-      !errorMsg.includes("system cannot find the path")
-    ) {
-      console.error("[WorkspacesConfig] Error reading workspaces config:", error);
+    if (!isNotFound(error)) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       const shouldOverwrite = globalThis.confirm(
         `Failed to parse workspaces configuration.\nError: ${errorMsg}\n\nDo you want to overwrite it with a blank/default state?`
       );
@@ -109,11 +97,7 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
     workspaces: [],
   };
 
-  try {
-    await saveWorkspacesConfig(initialConfig);
-  } catch (error) {
-    console.warn(`[WorkspacesConfig] Unable to save initial workspaces config:`, error);
-  }
+  await saveWorkspacesConfig(initialConfig);
 
   return initialConfig;
 }
@@ -142,9 +126,8 @@ async function saveWorkspacesConfig(config: WorkspacesConfig): Promise<void> {
 export async function addOrUpdateWorkspace(workspace: WorkspaceItem): Promise<WorkspacesConfig> {
   const config = await loadWorkspacesConfig();
 
-  // Always store absolute paths
   workspace.path = await resolve(workspace.path);
-  workspace.id = workspace.path; // force ID to be the path
+  workspace.id = workspace.path;
 
   const index = config.workspaces.findIndex((w) => w.path === workspace.path);
 

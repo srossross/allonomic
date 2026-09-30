@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
-import { ArrowRight, Globe, GraduationCap, Shield } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Globe, GraduationCap, Shield } from "lucide-react";
 import {
-  AVAILABLE_MODES,
   DEFAULT_EXECUTION_MODE,
   DEFAULT_GOVERNOR_MODE,
   GOVERNOR_MODES,
@@ -10,13 +9,19 @@ import {
   type ExecutionMode,
   type GovernorMode,
   type ModelOption,
-  type UserPrompt,
   type UserPromptValue,
 } from "@/types";
+import type { QueuedPrompt } from "@/core/graph/turnControl";
+import type { PendingPrompt } from "./pendingPrompt";
 import { ModeSelector } from "./ModeSelector";
 import { ModelSelector } from "./ModelSelector";
 import { PromptSurface } from "./PromptSurface";
 import { ContextMeter } from "./ContextMeter";
+import { ComposerButtons } from "./ComposerButtons";
+import { QueuedPromptList } from "./QueuedPromptList";
+import { SlashCommandMenu } from "./SlashCommandMenu";
+import { useSlashCommands, type SlashCommand } from "./useSlashCommands";
+import { PLACEHOLDERS, statusText, type ComposerPhase } from "./composerPhase";
 
 const GOVERNOR_MODE_LABELS: Record<GovernorMode, string> = {
   off: "off",
@@ -24,18 +29,19 @@ const GOVERNOR_MODE_LABELS: Record<GovernorMode, string> = {
   full: "on",
 };
 
-export interface PendingPrompt {
-  messageId: string;
-  toolId: string;
-  toolName: string;
-  prompt: UserPrompt;
-  promptId: string;
-}
+const ALREADY_SENT_MS = 2000;
 
 interface ChatComposerProperties {
-  loading: boolean;
+  sessionId: string;
+  phase: ComposerPhase;
+  queuedPrompts: QueuedPrompt[];
   onSendMessage: (text: string) => void;
   onStopMessage?: () => void;
+  onPause?: () => void;
+  onResume?: (text: string) => void;
+  onRemoveQueued?: (id: string) => boolean;
+  onPopQueued?: () => string | undefined;
+  onInputChange?: () => void;
   selectedModel?: string;
   onSelectModel?: (model: string) => void;
   models?: ModelOption[];
@@ -44,7 +50,7 @@ interface ChatComposerProperties {
   onSelectThinkingLevel?: (level: ThinkingLevel) => void;
   executionMode?: ExecutionMode;
   onSelectExecutionMode?: (mode: ExecutionMode) => void;
-  onCycleExecutionMode?: () => void;
+  onCycleExecutionMode: () => void;
   hasNetworkAccess?: boolean;
   onToggleHasNetworkAccess?: () => void;
   governorMode?: GovernorMode;
@@ -56,9 +62,16 @@ interface ChatComposerProperties {
 }
 
 export function ChatComposer({
-  loading,
+  sessionId,
+  phase,
+  queuedPrompts,
   onSendMessage,
   onStopMessage,
+  onPause,
+  onResume,
+  onRemoveQueued,
+  onPopQueued,
+  onInputChange,
   selectedModel = DEFAULT_MODEL_ID,
   onSelectModel,
   models,
@@ -78,21 +91,17 @@ export function ChatComposer({
   onRespondToPrompt,
 }: ChatComposerProperties) {
   const [input, setInput] = useState("");
+  const [isAlreadySentShown, setIsAlreadySentShown] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const alreadySentTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => clearTimeout(alreadySentTimerRef.current), []);
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, [sessionId]);
   const inputTokenLimit = models?.find((m) => m.id === selectedModel)?.inputTokenLimit;
   const contextMeter = <ContextMeter usedTokens={contextTokens} limitTokens={inputTokenLimit} />;
-
-  const cycleMode = useCallback(() => {
-    if (onCycleExecutionMode) {
-      onCycleExecutionMode();
-      return;
-    }
-    if (!onSelectExecutionMode) {
-      return;
-    }
-    const currentIndex = AVAILABLE_MODES.findIndex((m) => m.id === executionMode);
-    const nextIndex = (currentIndex + 1) % AVAILABLE_MODES.length;
-    onSelectExecutionMode(AVAILABLE_MODES[nextIndex].id);
-  }, [executionMode, onCycleExecutionMode, onSelectExecutionMode]);
 
   // Global Shift+Tab listener so toggling works anywhere
   useEffect(() => {
@@ -108,17 +117,36 @@ export function ChatComposer({
         return;
       }
       e.preventDefault();
-      cycleMode();
+      onCycleExecutionMode();
     };
 
     globalThis.addEventListener("keydown", handleGlobalKeyDown);
     return () => globalThis.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [cycleMode]);
+  }, [onCycleExecutionMode]);
+
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (pendingPrompt || e.repeat || e.defaultPrevented || e.key !== "Escape") return;
+      if (phase === "running") onPause?.();
+      else if (phase === "idle" || phase === "held") return;
+      else onStopMessage?.();
+      e.preventDefault();
+    };
+    globalThis.addEventListener("keydown", handleEscape);
+    return () => globalThis.removeEventListener("keydown", handleEscape);
+  }, [phase, pendingPrompt, onPause, onStopMessage]);
+
+  const handleSelectCommand = (command: SlashCommand) => {
+    onSendMessage(command.name);
+    setInput("");
+    onInputChange?.();
+  };
+  const slash = useSlashCommands(input, handleSelectCommand);
 
   if (pendingPrompt) {
     return (
-      <div className="border-border/80 bg-background border-t p-3">
-        <div className="border-border/80 bg-background/90 focus-within:border-primary/50 relative flex flex-col rounded-2xl border p-2.5 shadow-xs transition-colors">
+      <div className="pt-1">
+        <div className="border-border focus-within:border-primary/60 relative flex flex-col border-l-2 py-1 pl-2.5 transition-colors">
           <PromptSurface
             key={pendingPrompt.toolId}
             prompt={pendingPrompt.prompt}
@@ -130,17 +158,42 @@ export function ChatComposer({
     );
   }
 
+  const isPausedPhase = phase !== "idle" && phase !== "running";
+
   const handleSend = () => {
     const text = input.trim();
-    if (!text || loading) return;
-    onSendMessage(text);
+    if (isPausedPhase) {
+      onResume?.(text);
+    } else {
+      if (!text) return;
+      onSendMessage(text);
+    }
     setInput("");
+    onInputChange?.();
+  };
+
+  const handleRemove = (id: string) => {
+    if (onRemoveQueued?.(id)) return;
+    setIsAlreadySentShown(true);
+    clearTimeout(alreadySentTimerRef.current);
+    alreadySentTimerRef.current = setTimeout(() => setIsAlreadySentShown(false), ALREADY_SENT_MS);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slash.didHandleKey(e)) return;
+
     if (e.key === "Tab" && e.shiftKey) {
       e.preventDefault();
-      cycleMode();
+      onCycleExecutionMode();
+      return;
+    }
+
+    if (input === "" && e.key === "ArrowUp" && queuedPrompts.length > 0) {
+      const text = onPopQueued?.();
+      if (text === undefined) return;
+      e.preventDefault();
+      setInput(text);
+      onInputChange?.();
       return;
     }
 
@@ -153,15 +206,31 @@ export function ChatComposer({
   };
 
   return (
-    <div className="border-border/80 bg-background border-t p-3">
-      <div className="border-border/80 bg-background/90 focus-within:border-primary/50 relative flex flex-col gap-2 rounded-2xl border p-2.5 shadow-xs transition-colors">
+    <div className="pt-1">
+      <div className="border-border focus-within:border-primary/60 relative flex flex-col gap-2 border-l-2 py-1 pl-2.5 transition-colors">
+        {slash.commands.length > 0 && (
+          <SlashCommandMenu
+            commands={slash.commands}
+            index={slash.selectedIndex}
+            onHover={slash.setIndex}
+            onSelect={handleSelectCommand}
+          />
+        )}
+        <QueuedPromptList prompts={queuedPrompts} onRemove={handleRemove} />
+        <div aria-live="polite" className="text-muted-foreground text-xs empty:hidden">
+          {isAlreadySentShown ? "Already sent" : statusText(phase, queuedPrompts.length)}
+        </div>
         <textarea
+          ref={textareaRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value);
+            slash.resetDismissed();
+            onInputChange?.();
+          }}
           onKeyDown={handleKeyDown}
-          placeholder="Type a message..."
+          placeholder={PLACEHOLDERS[phase]}
           rows={2}
-          disabled={loading}
           className="text-foreground placeholder:text-muted-foreground/60 w-full resize-none bg-transparent px-1 py-0.5 text-xs leading-relaxed focus:ring-0 focus:outline-none disabled:opacity-50"
         />
 
@@ -237,31 +306,14 @@ export function ChatComposer({
             />
           </div>
 
-          <div className="flex items-center">
-            {loading ? (
-              <button
-                type="button"
-                onClick={onStopMessage}
-                className="group border-border/50 bg-muted text-foreground hover:bg-muted/80 flex size-7 cursor-pointer items-center justify-center rounded-full border shadow-xs transition-colors"
-                title="Stop generation"
-              >
-                <div className="size-2.5 rounded-xs bg-red-500 transition-colors group-hover:bg-red-600" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={!input.trim()}
-                className={`flex size-7 items-center justify-center rounded-full text-white shadow-xs transition-all ${
-                  input.trim()
-                    ? "bg-brand hover:bg-brand/90 cursor-pointer"
-                    : "bg-muted-foreground/30 text-muted-foreground cursor-not-allowed opacity-50"
-                }`}
-                title="Send prompt (Enter)"
-              >
-                <ArrowRight strokeWidth={2.5} className="size-3.5" />
-              </button>
-            )}
+          <div className="flex items-center gap-1.5">
+            <ComposerButtons
+              phase={phase}
+              canSend={input.trim().length > 0}
+              onSend={handleSend}
+              onPause={onPause}
+              onStop={onStopMessage}
+            />
           </div>
         </div>
         {contextMeter}

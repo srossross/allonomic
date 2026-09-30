@@ -1,4 +1,0 @@
-# Seed: turns/ from duckdb-driver session-1790557517889 with false-completion actions kept.
-# Turn 008 was truncated after the worker's final response so the governor exit runs fresh
-# against the false completions opened at the entry of the "verify" request.
-start_at: exit

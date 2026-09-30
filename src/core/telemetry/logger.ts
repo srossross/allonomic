@@ -28,7 +28,7 @@ export async function logConversation(
 
   const turns = messages.map((m) => {
     const entry: LogEntry["turns"][number] = {
-      type: m._getType(),
+      type: m.type,
       content: m.content,
     };
 

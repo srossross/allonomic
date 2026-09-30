@@ -1,10 +1,11 @@
 import type { Runtime } from "../ports";
-import { BaseMessage } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 import { findApiKey } from "../../common/env";
 import type { GovernorModel } from "./fork";
-import { AgentInterceptor, ExitVerdict, PipelineContext } from "../graph/types";
-import { GovernorState, type UserIntent } from "./types";
+import type { AgentInterceptor, ExitVerdict, PipelineContext } from "../graph/types";
+import type { GovernorState, UserIntent } from "./types";
+import { DEFAULT_MODEL_ID } from "../../types/chat";
 import { applyGovernorAction } from "./reducer";
 import {
   createGovernorPromptTools,
@@ -20,7 +21,7 @@ import {
   falseCompletionSection,
 } from "./falseCompletions";
 import { runReconciliation, verdictEmitter } from "./reconciliation";
-import { buildIntentBrief, buildRejectionContext } from "./prompts";
+import { buildFalseCompletionFeedback, buildIntentBrief, buildRejectionContext } from "./prompts";
 
 export type { GovernorModel } from "./fork";
 
@@ -59,7 +60,7 @@ export class GovernorInterceptor implements AgentInterceptor {
     this.forks = new GovernorForkRunner({
       runtime: options.runtime,
       name: this.name,
-      modelName: options.modelName ?? "gemini-3.8-flash",
+      modelName: options.modelName ?? DEFAULT_MODEL_ID,
       apiKey: this.apiKey,
       createModel: options.createModel,
       getIntents: () => this.state.intent_stack,
@@ -123,7 +124,6 @@ export class GovernorInterceptor implements AgentInterceptor {
     context: PipelineContext
   ): Promise<string | undefined> {
     if (!this.isEnabled) return;
-    if (!this.apiKey) throw new Error("Missing Gemini API key for Governor");
 
     const before = this.state.intent_stack;
     const dispatch = this.dispatcher(context, "entry");
@@ -131,6 +131,7 @@ export class GovernorInterceptor implements AgentInterceptor {
 
     let areIntentsFinished = false;
     const promptTools = createGovernorPromptTools(dispatch, (reasoning) => {
+      if (areIntentsFinished) return;
       areIntentsFinished = true;
       emitFinish(reasoning);
     });
@@ -180,7 +181,8 @@ export class GovernorInterceptor implements AgentInterceptor {
 
     let verdict: ExitVerdictSignal | null = null;
     const onVerdict = (v: ExitVerdictSignal) => {
-      verdict ??= v;
+      if (verdict) return;
+      verdict = v;
       context.events.emit({
         type: "governor_verdict",
         phase: "exit",
@@ -201,17 +203,18 @@ export class GovernorInterceptor implements AgentInterceptor {
       tools: exitTools,
       decision: () => verdict,
       nudge:
-        "Please call resolve_intent({ id }) for satisfied intents, then call finish({ approved: boolean, feedback?: string, nextStep?: string }).",
+        "Please call resolve_intent({ id }) for satisfied intents, then call finish({ approved: boolean }).",
       phase: "exit",
     });
 
     if (finalVerdict.approved) {
-      return { allowFinish: true, nextStep: finalVerdict.nextStep };
+      return { allowFinish: true };
     }
     return {
       allowFinish: false,
       feedback:
-        (finalVerdict.feedback || "Agent work was rejected.") + buildRejectionContext(this.state),
+        buildFalseCompletionFeedback(this.state) ??
+        "Agent work was rejected." + buildRejectionContext(this.state),
     };
   }
 }

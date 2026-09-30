@@ -4,6 +4,7 @@ import type { ExecutionModeSource } from "./approval";
 import { createFilesystemTools } from "./filesystem";
 import { createShellTools } from "./shell";
 import { createPermissionTools } from "./permissions";
+import { createWebTools } from "./web";
 
 export interface AgentToolOptions {
   sessionId?: string;
@@ -19,9 +20,11 @@ export function createAgentTools(
     ...createFilesystemTools(runtime, workspaceDir, executionMode, options),
     ...createShellTools(runtime, workspaceDir, executionMode, options),
     ...createPermissionTools(runtime, workspaceDir, options),
+    ...createWebTools(runtime, workspaceDir, options),
   ];
 }
 
 export * from "./filesystem";
 export * from "./shell";
+export * from "./web";
 export * from "./specs";

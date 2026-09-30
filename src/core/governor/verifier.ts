@@ -3,7 +3,8 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { findApiKey } from "../../common/env";
 import { invokeWithRetry } from "../retry";
-import { GovernorState, GovernorVerdict, verdictSchema } from "./types";
+import { type GovernorState, type GovernorVerdict, verdictSchema } from "./types";
+import { DEFAULT_MODEL_ID } from "../../types/chat";
 
 export interface VerifierOptions {
   modelName?: string;
@@ -19,7 +20,7 @@ export async function verifyConversation(
   if (!apiKey) throw new Error("Missing Gemini API key for governor verification");
 
   const model = new ChatGoogleGenerativeAI({
-    model: options.modelName ?? "gemini-3.8-flash",
+    model: options.modelName ?? DEFAULT_MODEL_ID,
     apiKey,
     temperature: 0,
   }).withStructuredOutput(verdictSchema);

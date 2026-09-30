@@ -7,17 +7,23 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-close",
     "fs:default",
     "dialog:default",
     "log:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://api.firecrawl.dev/*"
+        }
+      ]
+    },
     {
       "identifier": "fs:allow-read",
       "allow": [
         {
           "path": "**"
-        },
-        {
-          "path": "$HOME/**"
         },
         {
           "path": "$HOME/**/.allonomic"
@@ -37,9 +43,6 @@
           "path": "**"
         },
         {
-          "path": "$HOME/**"
-        },
-        {
           "path": "$HOME/**/.allonomic"
         },
         {
@@ -55,9 +58,6 @@
       "allow": [
         {
           "path": "**"
-        },
-        {
-          "path": "$HOME/**"
         },
         {
           "path": "$HOME/**/.allonomic"
@@ -77,9 +77,6 @@
           "path": "**"
         },
         {
-          "path": "$HOME/**"
-        },
-        {
           "path": "$HOME/**/.allonomic"
         },
         {
@@ -97,9 +94,6 @@
           "path": "**"
         },
         {
-          "path": "$HOME/**"
-        },
-        {
           "path": "$HOME/**/.allonomic"
         },
         {
@@ -115,9 +109,6 @@
       "allow": [
         {
           "path": "**"
-        },
-        {
-          "path": "$HOME/**"
         },
         {
           "path": "$HOME/**/.allonomic"
@@ -152,9 +143,6 @@
       "allow": [
         {
           "path": "**"
-        },
-        {
-          "path": "$HOME/**"
         }
       ]
     },
@@ -163,9 +151,6 @@
       "allow": [
         {
           "path": "**"
-        },
-        {
-          "path": "$HOME/**"
         }
       ]
     }

@@ -58,7 +58,7 @@ export function createTeacherPostToolTools(
     },
     {
       name: "teach",
-      description: "Tell the worker why the tool call failed and how to fix it.",
+      description: "Tell the agent why the tool call failed and how to fix it.",
       schema: z.object({
         lesson: z
           .string()

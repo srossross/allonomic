@@ -82,6 +82,7 @@ export function InjectorRow({
             Model
           </div>
           <select
+            aria-label="Interceptor model"
             value={settings.model ?? ""}
             disabled={!onSetSettings}
             onChange={(e) => onSetSettings?.({ ...settings, model: e.target.value || undefined })}

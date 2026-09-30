@@ -1,9 +1,9 @@
+import { DEFAULT_MODEL_ID } from "@/types";
+
 export interface ReframeOptions {
   apiKey?: string;
   modelName?: string;
 }
-
-const DEFAULT_MODEL = "gemini-3.8-flash";
 
 const PROMPT = `Reframe the given user intent into a satisfaction condition of 10 words or less for display in a UI.
 
@@ -42,23 +42,20 @@ export async function reframeSatisfaction(
 ): Promise<string> {
   // If running in browser / WebView: delegate to server endpoint to keep client bundle clean
   if (typeof window !== "undefined") {
-    try {
-      // eslint-disable-next-line no-restricted-globals
-      const res = await fetch("/api/agent/reframe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: intentDescription, options }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.condition) {
-          return data.condition;
-        }
-      }
-    } catch {
-      // Fallback on network failure
+    // eslint-disable-next-line no-restricted-globals
+    const res = await fetch("/api/agent/reframe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: intentDescription, options }),
+    });
+    if (!res.ok) throw new Error(`Reframe request failed: HTTP ${res.status}`);
+    const data: unknown = await res.json();
+    const condition =
+      typeof data === "object" && data !== null ? Reflect.get(data, "condition") : undefined;
+    if (typeof condition !== "string" || !condition) {
+      throw new Error("Reframe response had no condition");
     }
-    return intentDescription;
+    return condition;
   }
 
   // If running on server / Node.js:
@@ -72,7 +69,7 @@ export async function reframeSatisfaction(
   }
 
   const model = new ChatGoogleGenerativeAI({
-    model: options.modelName ?? DEFAULT_MODEL,
+    model: options.modelName ?? DEFAULT_MODEL_ID,
     apiKey,
     temperature: 0,
   });

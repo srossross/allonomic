@@ -193,7 +193,7 @@ describe("workflow state machine", () => {
     }));
     const { compiled } = build(loop);
     await expect(
-      compiled.invoke({ messages: [new HumanMessage("loop")] }, { ...config(), recursionLimit: 4 })
+      compiled.invoke({ messages: [new HumanMessage("loop")] }, { ...config(), recursionLimit: 5 })
     ).rejects.toThrow(GraphRecursionError);
 
     const closed = await closeUnansweredToolCalls(compiled, THREAD, "Not run: step limit reached");

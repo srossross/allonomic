@@ -26,6 +26,8 @@ export interface Transcript {
 
 function nextWaitingOn(current: string | undefined, event: TurnEvent): string | undefined {
   if (event.type === "waiting") return event.on;
+  if (event.type === "paused") return "Paused";
+  if (event.type === "resumed") return undefined;
   return event.type === "turn_completed" || event.type === "turn_failed" ? undefined : current;
 }
 
@@ -195,6 +197,21 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
           },
         ],
         contextMessages: [...t.contextMessages, { role: "human", content }],
+      };
+    }
+    case "prompt_delivered": {
+      return {
+        ...t,
+        messages: [
+          ...t.messages,
+          {
+            id: `user-${event.turnIndex}-${event.seq}`,
+            role: "user",
+            content: event.text,
+            isQueued: true,
+          },
+        ],
+        contextMessages: [...t.contextMessages, { role: "human", content: event.text }],
       };
     }
     case "exit_retry": {

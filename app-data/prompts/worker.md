@@ -20,3 +20,5 @@ Pick the shell whose purpose fits the job:
 - `shell_2_read_only`: toolchains and package managers that need caches (uv, npm, cargo, test runners, type-checking). Reads everything, writes caches, cannot modify the project.
 - `shell_3_project_write`: commands that change the project (installs, formatting, codegen, builds that write into the tree).
 - `shell_4_full_access`: no sandbox. Only when no sandboxed shell can work.
+
+For information outside the project, use `web_search` to find pages and `web_fetch` to read one as markdown.

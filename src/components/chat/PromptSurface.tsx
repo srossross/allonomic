@@ -7,6 +7,16 @@ interface PromptSurfaceProps {
   onRespond: (value: UserPromptValue) => void;
 }
 
+const KEY_GUARD_MS = 300;
+
+function useKeyGuard(): (e: React.KeyboardEvent) => boolean {
+  const mountedAt = useRef(0);
+  useEffect(() => {
+    mountedAt.current = Date.now();
+  }, []);
+  return (e) => e.repeat || Date.now() - mountedAt.current < KEY_GUARD_MS;
+}
+
 const kbdClass =
   "border-border/60 bg-muted/60 text-current rounded border px-1 py-0.5 font-mono text-2xs font-semibold";
 
@@ -36,7 +46,9 @@ function ConfirmPrompt({
     ref.current?.focus();
   }, []);
 
+  const isGuarded = useKeyGuard();
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isGuarded(e)) return;
     if (e.key === "Enter") {
       if (e.target !== e.currentTarget) return;
       e.preventDefault();
@@ -112,7 +124,9 @@ function ChoicePrompt({
     ref.current?.focus();
   }, []);
 
+  const isGuarded = useKeyGuard();
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isGuarded(e)) return;
     const n = prompt.options.length;
     switch (e.key) {
       case "ArrowDown": {
@@ -197,7 +211,12 @@ function TextPrompt({
     if (v) onRespond(v);
   };
 
+  const isGuarded = useKeyGuard();
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isGuarded(e)) {
+      e.preventDefault();
+      return;
+    }
     if (e.key === "Enter") {
       e.preventDefault();
       submit();

@@ -98,4 +98,22 @@ describe("askUser in the runner", () => {
     expect(runtime.shell.calls).toHaveLength(0);
     expect(() => runner.answerPrompt("missing", true)).toThrow("No pending prompt missing");
   });
+
+  it("a stop during a prompt fails the turn as stopped instead of becoming tool output", async () => {
+    const { runner } = fullAccessRunner([
+      { toolCalls: [toolCall("shell_4_full_access", { command: "make" }, "c1")] },
+      "never",
+    ]);
+    const events: TurnEvent[] = [];
+    const run = runner.run("build", "t1", {
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type === "prompt_requested") queueMicrotask(() => runner.abort("t1"));
+      },
+    });
+    await expect(run).rejects.toThrow();
+    const toolOutputs = events.flatMap((e) => (e.type === "tool_result" ? [e.content] : []));
+    expect(toolOutputs.some((content) => content.startsWith("Error executing"))).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "turn_failed", aborted: true });
+  });
 });

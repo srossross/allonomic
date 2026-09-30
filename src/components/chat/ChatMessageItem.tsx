@@ -1,4 +1,4 @@
-import { ChevronRight, Target } from "lucide-react";
+import { ChevronRight, RotateCcw, Target } from "lucide-react";
 import type { Message } from "@/types";
 import type { ToolItem } from "./exploreGroups";
 import { ExploreGroup, ToolCallRow } from "./ToolCallRows";
@@ -10,6 +10,7 @@ interface ChatMessageItemProperties {
   onToggleThought: () => void;
   expandedToolIds: Set<string>;
   onToggleTool: (toolId: string) => void;
+  onRetry?: () => void;
 }
 
 export function ChatMessageItem({
@@ -19,13 +20,12 @@ export function ChatMessageItem({
   onToggleThought,
   expandedToolIds,
   onToggleTool,
+  onRetry,
 }: ChatMessageItemProperties) {
   return (
     <div className="flex w-full flex-col items-start">
-      {/* Assistant Turn: Collapsible Thinking and Tool Calls */}
       {message.role === "assistant" && (
         <div className="mb-2 w-full space-y-1 select-text">
-          {/* Collapsible Thinking: "Thought for 3s ›" */}
           {message.thinking && (
             <div>
               <button
@@ -34,7 +34,9 @@ export function ChatMessageItem({
                 className="group text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1.5 py-0.5 text-xs font-normal transition-colors select-none"
               >
                 <span className="text-muted-foreground group-hover:text-foreground font-normal">
-                  Thought for {message.thinkingDurationSeconds ?? 3}s
+                  {message.thinkingDurationSeconds === undefined
+                    ? "Thought"
+                    : `Thought for ${message.thinkingDurationSeconds}s`}
                 </span>
                 <ChevronRight
                   className={`text-muted-foreground size-3 transition-transform duration-150 ${
@@ -50,7 +52,6 @@ export function ChatMessageItem({
             </div>
           )}
 
-          {/* Collapsible Tool Calls */}
           {toolItems.length > 0 && (
             <div className="space-y-1">
               {toolItems.map((item) => {
@@ -115,7 +116,22 @@ export function ChatMessageItem({
                 : "border-border/50 bg-muted/40 text-foreground border"
           }`}
         >
+          {message.isQueued && (
+            <span className="text-2xs mr-1.5 font-mono uppercase opacity-70">sent mid-turn</span>
+          )}
           {message.content}
+          {onRetry && (
+            <div className="mt-1.5 flex justify-end">
+              <button
+                type="button"
+                onClick={onRetry}
+                className="border-destructive/40 hover:bg-destructive/20 flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors"
+              >
+                <RotateCcw className="size-3" />
+                <span>Try again</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

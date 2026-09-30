@@ -174,7 +174,7 @@ export function governorActionFromCall(
       return {
         type: "push_intent",
         intent: {
-          id: stringArg(args, "id") ?? `itnt_${nanoid()}`,
+          id: stringArg(args, "id") || `itnt_${nanoid()}`,
           kind: kind.success ? kind.data : "other",
           description: stringArg(args, "description") ?? "",
           completed_when: stringArg(args, "completed_when") ?? null,

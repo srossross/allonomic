@@ -6,6 +6,7 @@ import type { Runtime } from "../ports";
 import type { ExecutionModeSource } from "../tools/approval";
 import type { ContextFile, TurnEvent, TurnEventListener, TurnEventSink } from "../turn/events";
 import type { AgentInterceptor } from "./types";
+import type { TurnRecord as PersistedTurnRecord } from "./turnPersistence";
 
 export type WorkflowModelFactory = (tools: StructuredToolInterface[]) => WorkflowModel;
 
@@ -23,6 +24,7 @@ export interface AgentRunnerOptions {
   enabledTools?: string[];
   thinkingBudget?: number;
   executionMode?: ExecutionModeSource;
+  startupWarnings?: { source: string; error: unknown }[];
 }
 
 export interface RunOptions {
@@ -38,13 +40,7 @@ export interface TurnResult {
   turnIndex: number;
   sessionId: string;
   turnDir: string;
-  logPath: string;
+  logPath?: string;
 }
 
-export interface TurnRecord {
-  turnIndex: number;
-  prompt: string | null;
-  startCount: number;
-  events: TurnEvent[];
-  sink: TurnEventSink;
-}
+export type TurnRecord = PersistedTurnRecord & { sink: TurnEventSink };

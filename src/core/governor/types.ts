@@ -42,20 +42,31 @@ export const evidenceSchema = z.object({
 
 export type Evidence = z.infer<typeof evidenceSchema>;
 
-const falseCompletionSchema = z.object({
+const falseCompletionFields = z.object({
   id: z.string(),
   intent_id: z.string(),
   summary: z.string(),
-  relies_on: z.string(),
   completes_as: z.string(),
   false_because: z.string(),
-  detect_by: z.string().nullable(),
-  evidence: evidenceSchema.nullable(),
+  check: z.string(),
+  evidence: evidenceSchema.nullable().default(null),
   resolution: falseCompletionResolutionSchema.nullable(),
   resolution_reason: z.string().nullable(),
   still_assumed: z.string().nullable().default(null),
-  directive: z.string().nullable().default(null),
 });
+
+// Legacy shapes: {summary, completes_as, false_because, detect_by, directive} and {reason, needs}.
+const falseCompletionSchema = z.preprocess((raw) => {
+  if (typeof raw !== "object" || raw === null || "check" in raw) return raw;
+  const legacy: Record<string, unknown> = { ...raw };
+  return {
+    ...legacy,
+    summary: legacy.summary ?? legacy.reason,
+    completes_as: legacy.completes_as ?? "",
+    false_because: legacy.false_because ?? legacy.reason,
+    check: legacy.directive ?? legacy.detect_by ?? legacy.needs ?? "",
+  };
+}, falseCompletionFields);
 
 export type FalseCompletion = z.infer<typeof falseCompletionSchema>;
 

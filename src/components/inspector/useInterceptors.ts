@@ -6,8 +6,9 @@ export function useInterceptors(
   workspacePath: string | undefined,
   sessionId: string | undefined,
   refreshKey: string
-): InterceptorInfo[] {
+): { interceptors: InterceptorInfo[]; error?: string } {
   const [interceptors, setInterceptors] = useState<InterceptorInfo[]>([]);
+  const [error, setError] = useState<string>();
 
   useEffect(() => {
     if (!sessionId) return;
@@ -15,9 +16,11 @@ export function useInterceptors(
     const load = async () => {
       try {
         const list = await fetchInterceptorsApi(workspacePath, sessionId);
-        if (isCurrent) setInterceptors(list);
-      } catch (error: unknown) {
-        console.error("Failed to load interceptors:", error);
+        if (!isCurrent) return;
+        setInterceptors(list);
+        setError(undefined);
+      } catch (loadError) {
+        if (isCurrent) setError(loadError instanceof Error ? loadError.message : String(loadError));
       }
     };
     void load();
@@ -26,5 +29,5 @@ export function useInterceptors(
     };
   }, [workspacePath, sessionId, refreshKey]);
 
-  return interceptors;
+  return { interceptors, error };
 }

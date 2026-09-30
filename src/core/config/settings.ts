@@ -6,6 +6,7 @@ import {
   DEFAULT_MODEL_ID,
   EXECUTION_MODE_LEVELS,
   GOVERNOR_MODES,
+  THINKING_LEVELS,
   type ExecutionMode,
   type GovernorMode,
   type ThinkingLevel,
@@ -32,14 +33,13 @@ const EXECUTION_MODE_IDS = [
   "write",
   "god",
 ] as const satisfies readonly ExecutionMode[];
-const THINKING_LEVELS = ["Off", "Low", "Medium", "High"] as const;
 
 const interceptorLayerSchema = z.object({
   model: z.string().optional(),
   thinking_level: z.enum(THINKING_LEVELS).optional(),
 });
 
-const layerSchema = z.object({
+export const layerSchema = z.object({
   execution_mode: z.enum(EXECUTION_MODE_IDS).optional(),
   network_access: z.boolean().optional(),
   governor_mode: z.enum(GOVERNOR_MODES).optional(),
@@ -117,7 +117,7 @@ function applyInterceptors(
   return merged;
 }
 
-function applyLayer(
+export function applyLayer(
   settings: Settings,
   layer: SettingsLayer,
   mergeSandbox: typeof replaceSandbox
@@ -181,14 +181,22 @@ async function userConfigPath(runtime: Runtime): Promise<string> {
   return join(await runtime.paths.appConfig(), USER_CONFIG_FILE);
 }
 
+export class ConfigError extends Error {
+  override name = "ConfigError";
+}
+
+function invalidConfig(path: string, error: unknown): ConfigError {
+  const message = error instanceof Error ? error.message : String(error);
+  return new ConfigError(`Invalid config ${path}: ${message}`, { cause: error });
+}
+
 async function initialUserConfig(runtime: Runtime): Promise<UserConfig> {
   const legacyPath = join(await runtime.paths.appConfig(), LEGACY_SANDBOX_FILE);
   if (!(await runtime.fs.exists(legacyPath))) return defaultUserConfig(DEFAULT_SANDBOX_CONFIG);
   try {
     return defaultUserConfig(parseSandboxConfig(await runtime.fs.readText(legacyPath)));
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Invalid config ${legacyPath}: ${message}`, { cause: error });
+    throw invalidConfig(legacyPath, error);
   }
 }
 
@@ -201,8 +209,7 @@ async function parseFile<T>(runtime: Runtime, path: string, schema: z.ZodType<T>
   try {
     return schema.parse(YAML.parse(await runtime.fs.readText(path)) ?? {});
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Invalid config ${path}: ${message}`, { cause: error });
+    throw invalidConfig(path, error);
   }
 }
 
@@ -214,7 +221,10 @@ export async function loadUserConfig(runtime: Runtime): Promise<UserConfig> {
   return config;
 }
 
-async function loadRepoProjectLayer(runtime: Runtime, project: string): Promise<SettingsLayer> {
+export async function loadRepoProjectLayer(
+  runtime: Runtime,
+  project: string
+): Promise<SettingsLayer> {
   const path = join(project, ".allonomic", USER_CONFIG_FILE);
   return (await runtime.fs.exists(path)) ? parseFile(runtime, path, layerSchema) : {};
 }

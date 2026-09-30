@@ -4,7 +4,7 @@ export const INSPECTOR_TABS = [
   "tools",
   "injectors",
   "files",
-  "settings",
+  "session",
   "profile",
 ] as const;
 

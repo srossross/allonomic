@@ -1,4 +1,5 @@
 import { tool } from "@langchain/core/tools";
+import { rethrowIfFatal } from "./fatal";
 import { DEFAULT_EXECUTION_MODE, LEVEL_MODES, type AccessLevel } from "@/types";
 import type { Runtime, ShellResult } from "../ports";
 import { createRejectedResult } from "../userPrompt";
@@ -132,6 +133,7 @@ export function createShellTools(
           return createRejectedResult(spec.name, prompt);
         return level === 4 ? await runUnsandboxed(command) : await runSandboxed(level, command);
       } catch (error: unknown) {
+        rethrowIfFatal(error);
         const message = error instanceof Error ? error.message : String(error);
         return `Error executing command "${command}": ${message}`;
       }

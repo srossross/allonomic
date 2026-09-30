@@ -15,19 +15,19 @@ export function usePromptResponses({ activeProject, activeTab }: UsePromptRespon
 
   const handleRespondToPrompt = useCallback(
     async (promptId: string, value: UserPromptValue) => {
-      log.info("respond", { promptId, value });
+      log.info({ promptId, value }, "respond");
       if (inFlightPromptIds.current.has(promptId)) {
-        log.warn("respond:duplicateIgnored", { promptId });
+        log.warn({ promptId }, "respond:duplicateIgnored");
         return;
       }
       inFlightPromptIds.current.add(promptId);
       try {
         await answerPromptApi(activeProject?.path, activeTab.id, promptId, value);
       } catch (error) {
-        log.error("respond:failed", {
-          promptId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        log.error(
+          { promptId, error: error instanceof Error ? error.message : String(error) },
+          "respond:failed"
+        );
         globalThis.alert(
           "Failed to answer prompt: " + (error instanceof Error ? error.message : String(error))
         );

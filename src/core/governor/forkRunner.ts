@@ -58,6 +58,7 @@ export class GovernorForkRunner {
 
   private createModel(tools: StructuredTool[]): GovernorModel {
     if (this.options.createModel) return this.options.createModel(tools);
+    if (!this.options.apiKey) throw new Error("Missing Gemini API key for Governor");
     return new ChatGoogleGenerativeAI({
       model: this.modelName,
       apiKey: this.options.apiKey,
@@ -111,6 +112,7 @@ export class GovernorForkRunner {
         decision,
         nudge,
         unknownTool,
+        sessionId: context.sessionId,
         waiting: { events: context.events, source: name, hook: PHASE_INTERCEPTOR_HOOK[phase] },
       });
     } finally {

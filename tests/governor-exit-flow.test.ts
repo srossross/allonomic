@@ -4,23 +4,7 @@ import { falseCompletionBlocks } from "../src/core/governor/falseCompletions";
 import { GovernorInterceptor } from "../src/core/governor/interceptor";
 import { createMemoryRuntime } from "../src/adapters/memory/runtime";
 import { localGovernor, recordingContext } from "./helpers/turnContext";
-import type { FalseCompletion } from "../src/core/governor/types";
-
-const parse = (r: unknown) => (typeof r === "string" ? JSON.parse(r) : r);
-
-const falseCompletion = (id: string, intent_id: string): FalseCompletion => ({
-  id,
-  intent_id,
-  summary: `summary ${id}`,
-  relies_on: "r",
-  completes_as: "c",
-  false_because: "f",
-  detect_by: null,
-  evidence: null,
-  resolution: null,
-  resolution_reason: null,
-  still_assumed: null,
-});
+import { falseCompletion, parse } from "./helpers/governorFixtures";
 
 describe("Governor Exit & Resolution Flow", () => {
   const runtime = createMemoryRuntime();
@@ -36,7 +20,7 @@ describe("Governor Exit & Resolution Flow", () => {
       false_completions: [],
     });
 
-    let exitVerdict: { approved: boolean; feedback?: string; nextStep?: string } | null = null;
+    let exitVerdict: { approved: boolean } | null = null;
     const tools = createGovernorExitTools(
       governor.dispatch,
       falseCompletionBlocks(governor.state),
@@ -48,22 +32,14 @@ describe("Governor Exit & Resolution Flow", () => {
     const resolveIntent = tools.find((t) => t.name === "resolve_intent")!;
     const finish = tools.find((t) => t.name === "finish")!;
 
-    // Resolve task 1
     const res1 = await resolveIntent.invoke({ id: "itnt_task_1" });
-    const parsed1 = typeof res1 === "string" ? JSON.parse(res1) : res1;
-    expect(parsed1.status).toBe("resolved");
+    expect(parse(res1).status).toBe("resolved");
     expect(governor.state().intent_stack.map((i) => i.id)).toEqual(["itnt_task_2"]);
     expect(governor.state().completed_intents.map((i) => i.id)).toEqual(["itnt_task_1"]);
 
-    // Signal finish with verdict
-    await finish.invoke({
-      approved: true,
-      nextStep: "Proceed to task 2 in next turn",
-    });
+    await finish.invoke({ approved: true });
 
-    expect(exitVerdict).not.toBeNull();
-    expect(exitVerdict?.approved).toBe(true);
-    expect(exitVerdict?.nextStep).toBe("Proceed to task 2 in next turn");
+    expect(exitVerdict).toEqual({ approved: true });
   });
 
   it("blocks resolve_intent and approval while a false completion is open", async () => {
@@ -75,10 +51,9 @@ describe("Governor Exit & Resolution Flow", () => {
           id: "fcomp_1",
           intent_id: "itnt_a",
           summary: "Verified against the wrong code",
-          relies_on: "Local checkout is the reviewed commit",
           completes_as: "Verdicts against local code",
-          false_because: "Different code",
-          detect_by: null,
+          false_because: "The local checkout is not the commit Copilot reviewed",
+          check: "Compare git rev-parse HEAD with the PR head commit",
           evidence: null,
           resolution: null,
           resolution_reason: null,
@@ -107,9 +82,9 @@ describe("Governor Exit & Resolution Flow", () => {
     expect(blockedFinish.status).toBe("blocked");
     expect(exitVerdict).toBeNull();
 
-    const rejected = parse(await finish.invoke({ approved: false, feedback: "check HEAD" }));
+    const rejected = parse(await finish.invoke({ approved: false }));
     expect(rejected.status).toBe("finished");
-    expect(exitVerdict).toEqual({ approved: false, feedback: "check HEAD", nextStep: undefined });
+    expect(exitVerdict).toEqual({ approved: false });
 
     governor.dispatch({
       type: "resolve_false_completion",
@@ -143,7 +118,7 @@ describe("Governor Exit & Resolution Flow", () => {
     });
     expect(parse(await finish.invoke({ approved: true }))).toEqual({
       status: "blocked",
-      message: `Cannot approve with open false completions: 'fcomp_1' ("summary fcomp_1"), 'fcomp_2' ("summary fcomp_2"). Call finish({ approved: false, feedback }) naming what you must still do.`,
+      message: `Cannot approve with open false completions: 'fcomp_1' ("summary fcomp_1"), 'fcomp_2' ("summary fcomp_2"). Call finish({ approved: false }).`,
     });
   });
 

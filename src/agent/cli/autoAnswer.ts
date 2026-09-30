@@ -16,6 +16,7 @@ function autoAnswer(prompt: UserPrompt, isYes: boolean): UserPromptValue {
 export function answerPromptsWith(runner: AgentRunner, isYes: boolean) {
   return (event: TurnEvent) => {
     if (event.type !== "prompt_requested") return;
-    queueMicrotask(() => runner.answerPrompt(event.promptId, autoAnswer(event.prompt, isYes)));
+    const value = autoAnswer(event.prompt, isYes);
+    queueMicrotask(() => runner.answerPrompt(event.promptId, value));
   };
 }

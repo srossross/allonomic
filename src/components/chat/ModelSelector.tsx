@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Brain, ChevronUp, Check, Search, Sparkles } from "lucide-react";
 import { DEFAULT_MODEL_ID, THINKING_LEVELS, type ModelOption, type ThinkingLevel } from "@/types";
+import { activateOnKey } from "@/lib/activateOnKey";
 
 type ModelChoice = Pick<ModelOption, "id" | "label" | "thinking">;
 
@@ -39,20 +40,39 @@ export function ModelSelector({
       setSearchQuery("");
     };
 
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setIsOpen(false);
+      setSearchQuery("");
+    };
+
     document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
     const timer = setTimeout(() => searchInputReference.current?.focus(), 50);
 
     return () => {
       clearTimeout(timer);
       document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
     };
   }, [isOpen]);
 
-  const combinedModels = useMemo((): ModelChoice[] => {
-    return models.some((m) => m.id === selectedModel)
-      ? models
-      : [...models, { id: selectedModel, label: selectedModel, thinking: [...THINKING_LEVELS] }];
-  }, [models, selectedModel]);
+  const currentModelObject = useMemo(
+    (): ModelChoice =>
+      models.find((m) => m.id === selectedModel) ?? {
+        id: selectedModel,
+        label: selectedModel,
+        thinking: [...THINKING_LEVELS],
+      },
+    [models, selectedModel]
+  );
+
+  const combinedModels = useMemo(
+    (): ModelChoice[] =>
+      models.some((m) => m.id === selectedModel) ? models : [...models, currentModelObject],
+    [models, selectedModel, currentModelObject]
+  );
 
   const filteredModels = useMemo(() => {
     if (!searchQuery.trim()) return combinedModels;
@@ -61,12 +81,6 @@ export function ModelSelector({
       (m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
     );
   }, [combinedModels, searchQuery]);
-
-  const currentModelObject: ModelChoice = combinedModels.find((m) => m.id === selectedModel) || {
-    id: selectedModel,
-    label: selectedModel,
-    thinking: [...THINKING_LEVELS],
-  };
 
   const handleCycleThinking = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -77,7 +91,6 @@ export function ModelSelector({
 
   return (
     <div className="relative" ref={menuReference}>
-      {/* Trigger Area with Model Label and Thinking Badge */}
       <div className="flex items-center gap-0.5">
         <button
           type="button"
@@ -126,7 +139,6 @@ export function ModelSelector({
             <span className="text-muted-foreground">Model</span>
           </div>
 
-          {/* Search Filter Input */}
           <div className="border-border/60 bg-muted/30 my-1 flex items-center gap-1.5 rounded-md border px-2 py-1">
             <Search className="text-muted-foreground size-3 shrink-0" />
             <input
@@ -139,8 +151,7 @@ export function ModelSelector({
             />
           </div>
 
-          {/* Scrollable Model List */}
-          <div className="max-h-48 space-y-0.5 overflow-y-auto pr-0.5">
+          <div role="listbox" className="max-h-48 space-y-0.5 overflow-y-auto pr-0.5">
             {filteredModels.length === 0 ? (
               <div className="text-muted-foreground py-2 text-center text-xs italic">
                 No matching models found
@@ -151,9 +162,13 @@ export function ModelSelector({
                 return (
                   <div
                     key={m.id}
+                    role="option"
+                    aria-selected={isSelected}
+                    tabIndex={0}
                     onClick={() => {
                       onSelectModel?.(m.id);
                     }}
+                    onKeyDown={activateOnKey(() => onSelectModel?.(m.id))}
                     className={`group flex cursor-pointer items-center justify-between rounded-sm px-2 py-1.5 text-xs transition-colors ${
                       isSelected ? "bg-muted/70 font-medium" : "hover:bg-muted/40"
                     }`}

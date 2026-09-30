@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TOOL_SPECS, type ToolCategory, type ToolSpec } from "@/core/tools/specs";
 import type { ExecutionMode } from "./chat";
 
-export type ToolCallStatus = "pending" | "rejected" | "executed" | "running" | "blocked";
+type ToolCallStatus = "pending" | "rejected" | "executed" | "running" | "blocked";
 
 export type UserPrompt =
   | {

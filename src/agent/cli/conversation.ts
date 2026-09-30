@@ -22,6 +22,7 @@ import type { HistoryEntry } from "../../core/history";
 import { SystemMessage } from "@langchain/core/messages";
 import { createTurnEventLog } from "../../core/turn/eventLog";
 import { historyToMessages } from "../../core/graph/threadState";
+import { stripThinking } from "../../core/graph/thinking";
 import type { PipelineContext } from "../../core/graph/types";
 import { answerPromptsWith, isYesFlag } from "./autoAnswer";
 
@@ -183,13 +184,15 @@ async function runExitOnly(
       throw new Error("No user to ask during an exit-only replay");
     },
   };
-  const conversation = [new SystemMessage(runner.systemPrompt), ...historyToMessages(history)];
+  const conversation = [
+    new SystemMessage(runner.systemPrompt),
+    ...stripThinking(historyToMessages(history)),
+  ];
   console.log(cyan(`▶ Exit of turn ${turnIndex}`));
   const verdict = await governor.onAgentFinish(conversation, context);
   console.log(
     verdict.allowFinish ? cyan("  exit approved") : red(`  exit rejected: ${verdict.feedback}`)
   );
-  if (verdict.nextStep) console.log(dim(`  next step: ${verdict.nextStep}`));
 }
 
 try {

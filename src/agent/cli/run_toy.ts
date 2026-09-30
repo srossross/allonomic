@@ -5,7 +5,7 @@ import { logConversation } from "../../core/telemetry/logger";
 import { createNodeRuntime } from "../../adapters/node/runtime";
 
 interface ChunkMessage {
-  _getType?: () => string;
+  type?: string;
   content?: string;
   tool_calls?: Array<{ name: string; args: unknown }>;
 }
@@ -41,7 +41,7 @@ async function main() {
     console.log(`--- Step ${step}: Node [${nodeName}] ---`);
     if (isChunkUpdate(rawUpdate) && rawUpdate.messages) {
       for (const message of rawUpdate.messages) {
-        const msgType = typeof message._getType === "function" ? message._getType() : "";
+        const msgType = message.type ?? "";
         if (msgType === "ai") {
           if (message.tool_calls && message.tool_calls.length > 0) {
             for (const tc of message.tool_calls) {

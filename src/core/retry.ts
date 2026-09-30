@@ -7,6 +7,10 @@ export interface RetryOptions {
   onRetry?: (attempt: number, delayMs: number, error: unknown) => void;
 }
 
+import { createLogger } from "./log";
+
+const log = createLogger("retry");
+
 const DEFAULT_MAX_RETRIES = 4;
 const DEFAULT_INITIAL_DELAY_MS = 5000;
 const DEFAULT_MAX_DELAY_MS = 60_000;
@@ -65,15 +69,14 @@ export function isRetryableError(error: unknown): boolean {
   if (!error) return false;
   const message = error instanceof Error ? error.message : String(error);
 
+  if (/\b(429|503|504)\b/.test(message)) return true;
+
   const retryableIndicators = [
-    "429",
     "Too Many Requests",
     "RESOURCE_EXHAUSTED",
     "quota exceeded",
     "generatelanguage.googleapis.com/generate_content_free_tier_requests",
-    "503",
     "Service Unavailable",
-    "504",
     "Gateway Timeout",
     "ECONNRESET",
     "ETIMEDOUT",
@@ -125,6 +128,10 @@ export async function invokeWithRetry<T>(
       attempt++;
 
       if (attempt > maxRetries || !isRetryableError(error)) {
+        log.error(
+          { attempt, err: error instanceof Error ? error.message : String(error) },
+          "giving up"
+        );
         throw error;
       }
 
@@ -137,9 +144,7 @@ export async function invokeWithRetry<T>(
       if (options.onRetry) {
         options.onRetry(attempt, delayMs, error);
       } else {
-        console.warn(
-          `[RateLimit] 429 quota limit encountered. Retrying in ${(delayMs / 1000).toFixed(1)}s (attempt ${attempt}/${maxRetries})...`
-        );
+        log.warn({ attempt, maxRetries, delayMs }, "retrying");
       }
 
       await sleep(delayMs, options.signal);

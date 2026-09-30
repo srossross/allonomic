@@ -37,6 +37,24 @@ export class FakeChatModel extends BaseChatModel {
   }
 }
 
+export class FailingOnceModel extends FakeChatModel {
+  constructor(
+    script: ScriptedTurn[],
+    private failOnCall: number
+  ) {
+    super(script);
+  }
+
+  async _generate(messages: BaseMessage[]): Promise<ChatResult> {
+    if (this.calls.length + 1 === this.failOnCall) {
+      this.calls.push(messages);
+      this.failOnCall = -1;
+      throw new Error("boom");
+    }
+    return await super._generate(messages);
+  }
+}
+
 export function toolCall(name: string, args: Record<string, unknown>, id: string): ToolCall {
   return { name, args, id, type: "tool_call" };
 }

@@ -39,7 +39,7 @@ function serializeMessages(messages: BaseMessage[]) {
     const toolCalls = "tool_calls" in m ? m.tool_calls : undefined;
     const toolCallId = "tool_call_id" in m ? m.tool_call_id : undefined;
     return {
-      type: m._getType(),
+      type: m.type,
       name: m.name,
       content: m.content,
       thinking,
@@ -97,13 +97,9 @@ export async function appendTraceLog(
   sessionDir: string,
   message: string
 ): Promise<void> {
-  try {
-    await fs.mkdir(sessionDir);
-    const entry = `[${new Date().toISOString()}] ${message}\n`;
-    await fs.writeText(join(sessionDir, "trace.log"), entry, { append: true });
-  } catch (error) {
-    console.warn("[appendTraceLog] Failed to write trace:", error);
-  }
+  await fs.mkdir(sessionDir);
+  const entry = `[${new Date().toISOString()}] ${message}\n`;
+  await fs.writeText(join(sessionDir, "trace.log"), entry, { append: true });
 }
 
 export interface TurnErrorData {
@@ -147,12 +143,6 @@ export async function saveTurnError(
     );
   }
   await writeEvents(fs, turnDir, data.events);
-
-  await appendTraceLog(
-    fs,
-    sessionDir,
-    `[ERROR] Turn ${data.turnIndex} failed: ${errorObject.error}`
-  );
 
   return turnDir;
 }

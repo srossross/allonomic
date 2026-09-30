@@ -70,15 +70,13 @@ const falseCompletion = (id: string, intent_id: string): FalseCompletion => ({
   id,
   intent_id,
   summary: id,
-  relies_on: "r",
   completes_as: "c",
   false_because: "f",
-  detect_by: null,
+  check: "k",
   evidence: null,
   resolution: null,
   resolution_reason: null,
   still_assumed: null,
-  directive: null,
 });
 
 const evidence = { source: "src/a.ts", quote: "const a = 1;" };

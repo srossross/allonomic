@@ -1,3 +1,0 @@
-# Seed: turns/ holds the recorded history the worker and governor see.
-# Turn 009 was truncated after the worker's final response so the governor exit runs fresh.
-start_at: exit

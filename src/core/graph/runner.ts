@@ -1,14 +1,10 @@
 import { GraphRecursionError, MemorySaver } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { HumanMessage, BaseMessage } from "@langchain/core/messages";
+import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import { createAgentTools } from "../tools";
 import { logConversation } from "../telemetry/logger";
 import { generateSessionId } from "../telemetry/session";
-import {
-  persistCompletedTurn,
-  didPersistFailedTurn,
-  closeToolCallsAfterFailure,
-} from "./turnPersistence";
+import { failTurn, persistCompletedTurn } from "./turnPersistence";
 import type {
   AgentRunnerOptions,
   RunOptions,
@@ -17,9 +13,10 @@ import type {
   WorkflowModelFactory,
 } from "./runnerTypes";
 import { findApiKey } from "../../common/env";
-import { createLogger } from "../log";
+import { createLogger, registerSessionSink, type Logger } from "../log";
 import type { Runtime } from "../ports";
 import type { UserPromptValue } from "../../types";
+import { DEFAULT_MODEL_ID } from "../../types/chat";
 import type { ExecutionModeSource } from "../tools/approval";
 import type { AgentInterceptor, PipelineContext } from "./types";
 import { extractFinalResponse } from "./thinking";
@@ -30,12 +27,13 @@ import type { ContextFile, RecoverableCall, TurnEvent, TurnEventListener } from 
 import { PromptBroker } from "./promptBroker";
 import { emitToolResults, recoverToolCalls } from "./recovery";
 import { SessionWriter } from "./sessionWriter";
+import { WarningRelay } from "./warningRelay";
+import { StopError } from "./stopError";
+import { TurnControls } from "./turnControl";
 
 export type * from "./runnerTypes";
 import { countRetries, createTurnEventLog } from "../turn/eventLog";
 import { GRAPH_RECURSION_LIMIT } from "./limits";
-
-const log = createLogger("pipeline/runner");
 
 const STEP_LIMIT_MESSAGE = `Stopped after reaching the ${GRAPH_RECURSION_LIMIT}-step limit. Send "continue" to keep going.`;
 
@@ -51,6 +49,8 @@ export class AgentRunner {
   private runtime: Runtime;
   private prompts = new PromptBroker();
   private writer: SessionWriter;
+  private log: Logger;
+  private warnings = new WarningRelay();
   public workspaceDir: string;
   public interceptors: AgentInterceptor[];
   public sessionId: string;
@@ -61,20 +61,29 @@ export class AgentRunner {
   public thinkingBudget?: number;
   public executionMode: ExecutionModeSource;
   public compiled!: CompiledWorkflow;
+  public controls = new TurnControls();
 
   constructor(options: AgentRunnerOptions) {
     this.runtime = options.runtime;
     this.workspaceDir = options.workspaceDir || ".";
-    this.modelName = options.modelName ?? "gemini-3.8-flash";
+    this.modelName = options.modelName ?? DEFAULT_MODEL_ID;
     this.interceptors = options.interceptors ?? [];
-    this.sessionId = options.sessionId || generateSessionId(8);
+    this.sessionId = options.sessionId || generateSessionId();
     this.systemPrompt = options.systemPrompt || "You are an expert software engineer...";
     this.contextFiles = options.contextFiles ?? [];
     this.turnIndex = options.initialTurnIndex ?? 1;
     this.enabledTools = options.enabledTools;
     this.thinkingBudget = options.thinkingBudget ?? 1024;
     this.executionMode = options.executionMode ?? "write";
-    this.writer = new SessionWriter(this.runtime.fs, () => this.getSessionDir());
+    this.log = createLogger("pipeline/runner").child({ sessionId: this.sessionId });
+    this.writer = new SessionWriter(
+      this.runtime.fs,
+      () => this.getSessionDir(),
+      this.warnings.warn
+    );
+    const startupWarnings = options.startupWarnings ?? [];
+    for (const { source, error } of startupWarnings) this.warnings.warn(source, error);
+    registerSessionSink(this.sessionId, (record) => this.writer.appendLog(record));
 
     if (options.createModel) {
       this.createModel = options.createModel;
@@ -138,19 +147,22 @@ export class AgentRunner {
       turnIndex,
       events: sink,
       askUser: this.prompts.createAskUser(sink, controller.signal),
+      control: this.controls.start(threadId),
     };
     let startCount = 0;
+    const turnRecord = () => ({ turnIndex, prompt, startCount, events, sink });
 
-    sink.emit({ type: "turn_started", threadId, prompt });
-    if (this.contextFiles.length > 0)
-      sink.emit({
-        type: "context_files_loaded",
-        agent: "worker",
-        hook: "session",
-        files: this.contextFiles,
-      });
     try {
-      await rehydrateHistory(this.compiled, threadId, options.history);
+      sink.emit({ type: "turn_started", threadId, prompt });
+      if (this.contextFiles.length > 0)
+        sink.emit({
+          type: "context_files_loaded",
+          agent: "worker",
+          hook: "session",
+          files: this.contextFiles,
+        });
+      this.warnings.attach(sink);
+      await rehydrateHistory(this.compiled, threadId, options.history, this.log);
       await prepare(context);
       startCount = await messageCount(this.compiled, threadId);
 
@@ -162,16 +174,10 @@ export class AgentRunner {
           recursionLimit: GRAPH_RECURSION_LIMIT,
         }
       );
-      if (controller.signal.aborted) throw new Error("Generation stopped by user");
+      if (controller.signal.aborted) throw new StopError();
 
-      const { response, thinking } = extractFinalResponse(finalResult.messages);
-      return await this.completeTurn(finalResult.messages, response, thinking, {
-        turnIndex,
-        prompt,
-        startCount,
-        events,
-        sink,
-      });
+      const { response, thinking } = extractFinalResponse(finalResult.messages, startCount);
+      return await this.completeTurn(finalResult.messages, response, thinking, turnRecord());
     } catch (error) {
       if (error instanceof GraphRecursionError && !controller.signal.aborted) {
         const closed = await closeUnansweredToolCalls(
@@ -180,41 +186,30 @@ export class AgentRunner {
           "Not run: step limit reached"
         );
         emitToolResults(sink, closed);
-        log.warn("run:stepLimit", { threadId, turnIndex, closedToolCalls: closed.length });
+        this.log.warn({ threadId, turnIndex, closedToolCalls: closed.length }, "run:stepLimit");
         const state = await this.compiled.getState({ configurable: { thread_id: threadId } });
-        return await this.completeTurn(state.values.messages ?? [], STEP_LIMIT_MESSAGE, "", {
-          turnIndex,
-          prompt,
-          startCount,
-          events,
-          sink,
-        });
+        const messages = state.values.messages ?? [];
+        return await this.completeTurn(messages, STEP_LIMIT_MESSAGE, "", turnRecord());
       }
-      emitToolResults(
-        sink,
-        await closeToolCallsAfterFailure(this.compiled, threadId, turnIndex, error)
-      );
-      sink.emit({
-        type: "turn_failed",
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        aborted: controller.signal.aborted,
-      });
-      const isSaved = await didPersistFailedTurn(
-        this.runtime.fs,
-        this.getSessionDir(),
-        this.compiled,
+      const { failure, isSaved } = await failTurn(error, {
+        log: this.log,
+        fs: this.runtime.fs,
+        sessionDir: this.getSessionDir(),
+        compiled: this.compiled,
         threadId,
-        error,
-        { turnIndex, prompt, startCount, events }
-      );
+        sink,
+        aborted: controller.signal.aborted,
+        record: { turnIndex, prompt, startCount, events },
+      });
       if (isSaved) this.turnIndex++;
-      throw error;
+      throw failure;
     } finally {
+      this.warnings.detach(sink);
       options.signal?.removeEventListener("abort", onAbort);
       if (this.activeControllers.get(threadId) === controller) {
         this.activeControllers.delete(threadId);
       }
+      this.controls.end(threadId, context.control);
     }
   }
 
@@ -225,6 +220,7 @@ export class AgentRunner {
     turn: TurnRecord
   ): Promise<TurnResult> {
     const { sink, ...record } = turn;
+    await this.writer.flush();
     sink.emit({
       type: "turn_completed",
       retries: countRetries(record.events),
@@ -240,7 +236,12 @@ export class AgentRunner {
       record
     );
     this.turnIndex++;
-    const logPath = await logConversation(this.runtime.fs, messages, this.workspaceDir);
+    let logPath: string | undefined;
+    try {
+      logPath = await logConversation(this.runtime.fs, messages, this.workspaceDir);
+    } catch (error) {
+      this.warnings.warn("conversation log", error);
+    }
 
     return {
       messages,

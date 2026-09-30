@@ -3,18 +3,30 @@ import { tauriRuntime } from "../adapters/tauri/runtime";
 import {
   runAgentPrompt,
   stopAgentPrompt,
+  pauseAgent,
+  resumeAgent,
+  enqueueAgentPrompt,
+  didDequeueAgentPrompt,
   answerAgentPrompt,
   recoverAgentSession,
   listInterceptors,
   type AgentTurnSummary,
 } from "./server";
 import type { InterceptorInfo } from "../core/graph/types";
+import type { QueuedPrompt } from "../core/graph/turnControl";
 import {
   resolveSettings,
   updateSessionSettings,
   type Settings,
+  type SettingsLayer,
   type SettingsPatch,
 } from "../core/config/settings";
+import {
+  loadScopedSettings,
+  saveSettingsLayer,
+  type ScopedSettings,
+  type SettingsScope,
+} from "../core/config/scopedSettings";
 import type {
   WorkspacesConfig,
   WorkspaceItem,
@@ -26,6 +38,20 @@ import type {
 } from "@/types";
 import { loadModels } from "../core/models";
 import type { RecoverableCall, TurnEventListener } from "@/core/turn/events";
+import {
+  loadWorkspacesConfig,
+  addOrUpdateWorkspace,
+  setActiveWorkspaceId,
+  renameWorkspace,
+  deleteWorkspace,
+} from "../persistence/workspaces";
+import {
+  loadWorkspaceState,
+  saveWorkspaceState,
+  saveInspectorTabs,
+} from "../persistence/workspaceState";
+import { listSessions, loadSessionMetadata, saveSessionMetadata } from "../core/session/metadata";
+import { rehydrateSession } from "../core/session/rehydration";
 
 export type { AgentTurnSummary } from "./server";
 
@@ -52,6 +78,22 @@ export async function runAgentPromptApi({
 
 export async function stopAgentPromptApi(threadId: string, sessionId?: string): Promise<void> {
   await stopAgentPrompt(threadId, sessionId);
+}
+
+export function pauseAgentApi(threadId: string, sessionId: string): void {
+  pauseAgent(threadId, sessionId);
+}
+
+export function resumeAgentApi(threadId: string, sessionId: string): void {
+  resumeAgent(threadId, sessionId);
+}
+
+export function enqueuePromptApi(threadId: string, sessionId: string, prompt: QueuedPrompt): void {
+  enqueueAgentPrompt(threadId, sessionId, prompt);
+}
+
+export function didDequeuePromptApi(threadId: string, sessionId: string, id: string): boolean {
+  return didDequeueAgentPrompt(threadId, sessionId, id);
 }
 
 export interface RecoverSessionParams extends AgentCallParams {
@@ -82,14 +124,6 @@ export async function answerPromptApi(
   await answerAgentPrompt(workspaceDir, sessionId, promptId, value);
 }
 
-import {
-  loadWorkspacesConfig,
-  addOrUpdateWorkspace,
-  setActiveWorkspaceId,
-  renameWorkspace,
-  deleteWorkspace,
-} from "../persistence/workspaces";
-
 // Workspaces API
 export async function fetchWorkspacesApi(): Promise<WorkspacesConfig> {
   return await loadWorkspacesConfig();
@@ -114,12 +148,6 @@ export async function deleteWorkspaceApi(workspaceId: string): Promise<Workspace
   return await deleteWorkspace(workspaceId);
 }
 
-import {
-  loadWorkspaceState,
-  saveWorkspaceState,
-  saveInspectorTabs,
-} from "../persistence/workspaceState";
-
 // Workspace State API (<workspaceDir>/.allonomic/workspace.yml)
 export async function fetchWorkspaceStateApi(
   workspaceDir: string
@@ -132,29 +160,12 @@ export async function saveWorkspaceStateApi(
   workspaceDir: string,
   state: WorkspaceState
 ): Promise<void> {
-  try {
-    await saveWorkspaceState(workspaceDir, state);
-  } catch (error) {
-    console.error("Failed to save workspace state:", error);
-    globalThis.alert(
-      "Failed to save workspace state: " + (error instanceof Error ? error.message : String(error))
-    );
-  }
+  await saveWorkspaceState(workspaceDir, state);
 }
 
 export async function saveInspectorTabsApi(workspaceDir: string, tabs: string[]): Promise<void> {
-  try {
-    await saveInspectorTabs(workspaceDir, tabs);
-  } catch (error) {
-    console.error("Failed to save inspector tabs:", error);
-    globalThis.alert(
-      "Failed to save inspector tabs: " + (error instanceof Error ? error.message : String(error))
-    );
-  }
+  await saveInspectorTabs(workspaceDir, tabs);
 }
-
-import { listSessions, saveSessionMetadata } from "../core/session/metadata";
-import { rehydrateSession } from "../core/session/rehydration";
 
 // Sessions API
 export async function fetchSessionsApi(
@@ -175,14 +186,38 @@ export async function saveSessionMetadataApi(
   workspaceDir: string,
   metadata: SessionMetadata
 ): Promise<void> {
-  try {
-    await saveSessionMetadata(tauriRuntime.fs, workspaceDir, metadata);
-  } catch (error) {
-    console.error("Failed to save session metadata:", error);
-    globalThis.alert(
-      "Failed to save session metadata: " + (error instanceof Error ? error.message : String(error))
-    );
-  }
+  await saveSessionMetadata(tauriRuntime.fs, workspaceDir, metadata);
+}
+
+export async function closeSessionApi(
+  workspaceDir: string,
+  sessionId: string,
+  title: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  const existing = await loadSessionMetadata(tauriRuntime.fs, workspaceDir, sessionId);
+  await saveSessionMetadata(tauriRuntime.fs, workspaceDir, {
+    ...(existing ?? { sessionId, createdAt: now }),
+    title,
+    closed: true,
+    updatedAt: now,
+  });
+}
+
+export async function fetchScopedSettingsApi(
+  workspaceDir: string,
+  sessionId: string | undefined
+): Promise<ScopedSettings> {
+  return await loadScopedSettings(tauriRuntime, workspaceDir, sessionId);
+}
+
+export async function saveSettingsLayerApi(
+  workspaceDir: string,
+  sessionId: string | undefined,
+  scope: SettingsScope,
+  layer: SettingsLayer
+): Promise<void> {
+  await saveSettingsLayer(tauriRuntime, workspaceDir, sessionId, scope, layer);
 }
 
 export async function fetchSessionSettingsApi(

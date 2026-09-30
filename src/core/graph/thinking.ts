@@ -63,7 +63,10 @@ export function messageText(content: unknown): string {
     .trim();
 }
 
-export function extractFinalResponse(messages: BaseMessage[]): {
+export function extractFinalResponse(
+  messages: BaseMessage[],
+  startCount: number
+): {
   response: string;
   thinking: string;
 } {
@@ -71,23 +74,12 @@ export function extractFinalResponse(messages: BaseMessage[]): {
   let thinking = "";
 
   const lastMessage = messages.at(-1);
-  if (lastMessage && lastMessage.content && lastMessage._getType() === "ai") {
+  if (lastMessage && lastMessage.content && lastMessage.type === "ai") {
     response = messageText(lastMessage.content);
   }
 
-  // Only extract thinking from the current turn (messages after the last user/human prompt)
-  let turnStartIndex = 0;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const type = messages[index]._getType();
-    if (type === "human") {
-      turnStartIndex = index;
-      break;
-    }
-  }
-
-  const turnMessages = messages.slice(turnStartIndex);
-  for (const message of turnMessages) {
-    if (message._getType() !== "ai") continue;
+  for (const message of messages.slice(startCount)) {
+    if (message.type !== "ai") continue;
     const t = extractThinking(message);
     if (t) {
       thinking += (thinking ? "\n\n" : "") + t;
@@ -120,6 +112,20 @@ export function sanitizeMessagesForModel(messages: BaseMessage[]): BaseMessage[]
     const clone = Object.create(Object.getPrototypeOf(message));
     return Object.assign(clone, message, { content: newContent });
   });
+}
+
+export function stripThinking(messages: BaseMessage[]): BaseMessage[] {
+  return sanitizeMessagesForModel(
+    messages.map((message) => {
+      const content = Array.isArray(message.content)
+        ? message.content.filter((part: unknown) => !isThoughtPart(part))
+        : message.content;
+      const additional_kwargs = { ...message.additional_kwargs };
+      delete additional_kwargs.thinking;
+      const clone = Object.create(Object.getPrototypeOf(message));
+      return Object.assign(clone, message, { content, additional_kwargs });
+    })
+  );
 }
 
 const THOUGHT_SIGNATURES_KEY = "__gemini_function_call_thought_signatures__";

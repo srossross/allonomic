@@ -68,6 +68,18 @@ export function formatTraceLine(event: TurnEvent): string {
     case "waiting": {
       return `[WAITING] ${event.on}`;
     }
+    case "paused": {
+      return `[PAUSED] ${turn}`;
+    }
+    case "resumed": {
+      return `[RESUMED] ${turn}`;
+    }
+    case "prompt_delivered": {
+      return `[PROMPT_DELIVERED] ${event.queueId}: "${clip(event.text)}"`;
+    }
+    case "warning": {
+      return `[WARNING] ${event.source}: ${event.message}`;
+    }
     case "turn_completed": {
       return `[TURN_SUCCESS] ${turn} finished successfully (retries: ${event.retries}).`;
     }

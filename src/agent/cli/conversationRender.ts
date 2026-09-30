@@ -16,7 +16,6 @@ export const magenta = paint("35");
 export const cyan = paint("36");
 export const yellow = paint("33");
 export const red = paint("31");
-export const green = paint("32");
 
 const width = Math.min(process.stdout.columns ?? 100, 120);
 
@@ -120,10 +119,9 @@ function renderFalseCompletion(falseCompletion: FalseCompletion): string {
     : dim("none");
   return [
     `  ${badge} ${bold(falseCompletion.summary)}`,
-    `      ${dim("relies on:")}     ${falseCompletion.relies_on}`,
     `      ${dim("completes as:")}  ${falseCompletion.completes_as}`,
     `      ${dim("false because:")} ${falseCompletion.false_because}`,
-    `      ${dim("detect by:")}     ${falseCompletion.detect_by ?? dim("none")}`,
+    `      ${dim("check:")}         ${falseCompletion.check}`,
     `      ${dim("evidence:")}      ${evidence}`,
   ].join("\n");
 }

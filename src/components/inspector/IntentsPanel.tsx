@@ -21,12 +21,11 @@ import { ProfileTab } from "./ProfileTab";
 import { EMPTY_PROFILE, type Profile } from "@/core/turn/profile";
 import { AgentFilesTab } from "./AgentFilesTab";
 import { ConsoleTab } from "./ConsoleTab";
-import { SettingsTab } from "./SettingsTab";
+import { SessionTab } from "./SessionTab";
 import { InspectorTabBar } from "./InspectorTabBar";
 import { useInspectorTabs } from "./useInspectorTabs";
 import { useInterceptors } from "./useInterceptors";
-
-// Re-export types for backward compatibility
+import { toggleInSet } from "@/lib/toggleInSet";
 
 const EMPTY_INTERCEPTOR_SETTINGS: Record<string, InterceptorSettings> = {};
 
@@ -38,8 +37,8 @@ export interface IntentsPanelProps {
   agentFiles?: AgentFileRow[];
   onClearConsole?: () => void;
   enabledTools?: string[];
-  onToggleTool?: (toolName: string) => void;
-  onSetAllTools?: (isEnabled: boolean) => void;
+  onToggleTool: (toolName: string) => void;
+  onSetAllTools: (isEnabled: boolean) => void;
   sessionId?: string;
   workspacePath?: string;
   selectedModel?: string;
@@ -78,13 +77,14 @@ export function IntentsPanel({
   profile = EMPTY_PROFILE,
 }: IntentsPanelProps) {
   const isGovernorOff = governorMode === "off";
-  const interceptors = useInterceptors(
+  const { interceptors, error: interceptorsError } = useInterceptors(
     workspacePath,
     sessionId,
     JSON.stringify([governorMode, isTeacherEnabled, selectedModel, interceptorSettings])
   );
   const { order: tabOrder, activeTab, select: selectTab } = useInspectorTabs(workspacePath);
   const [reframedMap, setReframedMap] = useState<Record<string, string>>({});
+  const [reframeErrors, setReframeErrors] = useState<Record<string, string>>({});
   const [selection, setSelection] = useState<{
     intentId: string;
     falseCompletionId: string | null;
@@ -98,52 +98,16 @@ export function IntentsPanel({
   const [expandedInjectorIds, setExpandedInjectorIds] = useState<Set<string>>(new Set());
   const inFlightReference = useRef<Set<string>>(new Set());
 
-  const [uncontrolledTools, setUncontrolledTools] = useState<string[]>(enabledTools);
-  const activeEnabledTools = onToggleTool ? enabledTools : uncontrolledTools;
-
-  const handleToolToggle = (name: string) => {
-    if (onToggleTool) {
-      onToggleTool(name);
-    } else {
-      setUncontrolledTools((previous) =>
-        previous.includes(name) ? previous.filter((n) => n !== name) : [...previous, name]
-      );
-    }
-  };
-
-  const handleSetAll = (isEnabled: boolean) => {
-    if (onSetAllTools) {
-      onSetAllTools(isEnabled);
-    } else {
-      setUncontrolledTools(isEnabled ? AVAILABLE_TOOLS.map((t) => t.name) : []);
-    }
-  };
-
   const toggleToolExpanded = (name: string) => {
-    setExpandedToolNames((previous) => {
-      const next = new Set(previous);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
+    setExpandedToolNames((previous) => toggleInSet(previous, name));
   };
 
   const toggleInjectorExpanded = (id: string) => {
-    setExpandedInjectorIds((previous) => {
-      const next = new Set(previous);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setExpandedInjectorIds((previous) => toggleInSet(previous, id));
   };
 
   const toggleEventExpanded = (id: string) => {
-    setExpandedEventIds((previous) => {
-      const next = new Set(previous);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setExpandedEventIds((previous) => toggleInSet(previous, id));
   };
 
   useEffect(() => {
@@ -152,11 +116,10 @@ export function IntentsPanel({
     async function fetchReframe(key: string, description: string) {
       try {
         const condition = await reframeSatisfaction(description);
-        if (condition) {
-          setReframedMap((previous) => ({ ...previous, [key]: condition }));
-        }
-      } catch {
-        setReframedMap((previous) => ({ ...previous, [key]: description }));
+        setReframedMap((previous) => ({ ...previous, [key]: condition }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setReframeErrors((previous) => ({ ...previous, [key]: message }));
       } finally {
         inFlightReference.current.delete(key);
       }
@@ -164,12 +127,18 @@ export function IntentsPanel({
 
     for (const intent of allIntents) {
       const key = intent.id || intent.description;
-      if (!key || Object.hasOwn(reframedMap, key) || inFlightReference.current.has(key)) continue;
+      if (
+        !key ||
+        Object.hasOwn(reframedMap, key) ||
+        Object.hasOwn(reframeErrors, key) ||
+        inFlightReference.current.has(key)
+      )
+        continue;
 
       inFlightReference.current.add(key);
       void fetchReframe(key, intent.description);
     }
-  }, [intentStack, completedIntents, reframedMap]);
+  }, [intentStack, completedIntents, reframedMap, reframeErrors]);
 
   return (
     <div className="bg-background flex h-full flex-col select-none">
@@ -197,7 +166,7 @@ export function IntentsPanel({
             label: "tools",
             badge: (
               <span className="text-muted-foreground text-2xs ml-1 font-mono">
-                {activeEnabledTools.length}/{AVAILABLE_TOOLS.length}
+                {enabledTools.length}/{AVAILABLE_TOOLS.length}
               </span>
             ),
           },
@@ -219,7 +188,7 @@ export function IntentsPanel({
               </span>
             ),
           },
-          settings: { label: "settings" },
+          session: { label: "session" },
         }}
         trailing={
           activeTab === "console" &&
@@ -248,6 +217,7 @@ export function IntentsPanel({
               isDone={!intentStack.includes(selectedIntent)}
               falseCompletions={falseCompletions.filter((r) => r.intent_id === selectedIntent.id)}
               reframed={reframedMap[selectedIntent.id]}
+              reframeError={reframeErrors[selectedIntent.id]}
               focusFalseCompletionId={selection?.falseCompletionId ?? null}
               onBack={() => setSelection(null)}
             />
@@ -274,10 +244,10 @@ export function IntentsPanel({
 
         {activeTab === "tools" && (
           <ToolsTab
-            activeEnabledTools={activeEnabledTools}
+            activeEnabledTools={enabledTools}
             expandedToolNames={expandedToolNames}
-            onToggleTool={handleToolToggle}
-            onSetAllTools={handleSetAll}
+            onToggleTool={onToggleTool}
+            onSetAllTools={onSetAllTools}
             onToggleExpand={toggleToolExpanded}
           />
         )}
@@ -285,6 +255,7 @@ export function IntentsPanel({
         {activeTab === "injectors" && (
           <InjectorsTab
             interceptors={interceptors}
+            error={interceptorsError}
             expandedNames={expandedInjectorIds}
             onToggleExpand={toggleInjectorExpanded}
             models={models}
@@ -297,8 +268,8 @@ export function IntentsPanel({
           <AgentFilesTab agentFiles={agentFiles} workspacePath={workspacePath} />
         )}
 
-        {activeTab === "settings" && (
-          <SettingsTab
+        {activeTab === "session" && (
+          <SessionTab
             sessionId={sessionId}
             workspacePath={workspacePath}
             selectedModel={selectedModel}

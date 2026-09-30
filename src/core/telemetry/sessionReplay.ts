@@ -1,7 +1,8 @@
 import YAML from "yaml";
 import type { FileStore } from "../ports";
 import { join, basename } from "../paths";
-import { HumanMessage, AIMessage, BaseMessage } from "@langchain/core/messages";
+import { isNotFound } from "../fsErrors";
+import { HumanMessage, AIMessage, type BaseMessage } from "@langchain/core/messages";
 import type { GovernorState } from "../governor/types";
 import { applyGovernorAction, EMPTY_GOVERNOR_STATE } from "../governor/reducer";
 import { loadSessionTurns, nextTurnIndexAfter, turnDirName } from "../turn/turnFiles";
@@ -47,9 +48,14 @@ async function copyDirRecursive(fs: FileStore, src: string, dst: string) {
 }
 
 async function copyMetadata(fs: FileStore, sourceDir: string, newDir: string) {
-  const source = join(sourceDir, METADATA_FILE);
-  if (!(await fs.exists(source))) return;
-  const data: unknown = YAML.parse(await fs.readText(source));
+  let raw: string;
+  try {
+    raw = await fs.readText(join(sourceDir, METADATA_FILE));
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+  const data: unknown = YAML.parse(raw);
   const fields = data && typeof data === "object" ? data : {};
   await fs.writeText(
     join(newDir, METADATA_FILE),

@@ -23,7 +23,7 @@ describe("turn event log", () => {
     expect(countRetries(events)).toBe(1);
   });
 
-  it("keeps recording when a listener throws", () => {
+  it("propagates a listener error to the emitter after recording the event", () => {
     const later: string[] = [];
     const { sink, events } = createTurnEventLog(1, [
       () => {
@@ -33,9 +33,11 @@ describe("turn event log", () => {
         later.push(e.type);
       },
     ]);
-    sink.emit({ type: "turn_started", threadId: "t", prompt: null });
+    expect(() => sink.emit({ type: "turn_started", threadId: "t", prompt: null })).toThrow(
+      "ui blew up"
+    );
     expect(events.length).toBe(1);
-    expect(later).toEqual(["turn_started"]);
+    expect(later).toEqual([]);
   });
 
   it("produces events that round-trip through the persisted schema", () => {

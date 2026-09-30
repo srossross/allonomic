@@ -10,7 +10,7 @@ const toolCallRequestSchema = z.object({
   thoughtSignature: z.string().optional(),
 });
 
-export type ToolCallRequest = z.infer<typeof toolCallRequestSchema>;
+type ToolCallRequest = z.infer<typeof toolCallRequestSchema>;
 
 export type RecoverableCall = ToolCallRequest & { decidedBy: string[] };
 
@@ -59,14 +59,8 @@ const governorForkMessageSchema = z.discriminatedUnion("role", [
 
 export type GovernorForkMessage = z.infer<typeof governorForkMessageSchema>;
 
-export const contextFileAgentSchema = z.enum(["worker", "governor", "teacher"]);
-export const contextFileHookSchema = z.enum([
-  "session",
-  "userPrompt",
-  "preTool",
-  "postTool",
-  "finish",
-]);
+const contextFileAgentSchema = z.enum(["worker", "governor", "teacher"]);
+const contextFileHookSchema = z.enum(["session", "userPrompt", "preTool", "postTool", "finish"]);
 
 const contextFileSchema = z.object({
   path: z.string(),
@@ -168,6 +162,10 @@ const turnEventBodySchema = z.discriminatedUnion("type", [
     files: z.array(contextFileSchema),
   }),
   z.object({ type: z.literal("exit_retry"), feedback: z.string() }),
+  z.object({ type: z.literal("paused") }),
+  z.object({ type: z.literal("resumed") }),
+  z.object({ type: z.literal("prompt_delivered"), queueId: z.string(), text: z.string() }),
+  z.object({ type: z.literal("warning"), source: z.string(), message: z.string() }),
   z.object({ type: z.literal("turn_completed"), retries: z.number(), finalResponse: z.string() }),
   z.object({
     type: z.literal("turn_failed"),

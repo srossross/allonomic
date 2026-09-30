@@ -39,8 +39,8 @@ export interface IntentBriefChanges {
 
 function intentBlock(intent: UserIntent, state: GovernorState, isChanged: boolean): string {
   const directives = state.false_completions
-    .filter((fc) => fc.intent_id === intent.id && fc.resolution === null && fc.directive)
-    .map((fc) => `  * ${fc.directive}`);
+    .filter((fc) => fc.intent_id === intent.id && fc.resolution === null && fc.check)
+    .map((fc) => `  * ${fc.check}`);
   return [
     `Goal: ${intent.description}`,
     isChanged && intent.changelog.length > 0 && `Changed: ${intent.changelog.at(-1)}`,
@@ -60,6 +60,15 @@ export function buildIntentBrief(
     ...changed.map((intent) => intentBlock(intent, state, true)),
     ...dropped.map((intent) => `No longer needed: ${intent.description}`),
   ];
+  return blocks.length > 0 ? blocks.join("\n\n") : undefined;
+}
+
+export function buildFalseCompletionFeedback(state: GovernorState): string | undefined {
+  const blocks = state.intent_stack.flatMap((intent) =>
+    state.false_completions
+      .filter((fc) => fc.intent_id === intent.id && fc.resolution === null)
+      .map((fc) => `${intent.description}\n${fc.summary}: ${fc.false_because}\nCheck: ${fc.check}`)
+  );
   return blocks.length > 0 ? blocks.join("\n\n") : undefined;
 }
 

@@ -4,6 +4,7 @@ import type { RecoverableCall, TurnEventSink } from "../turn/events";
 import type { AgentInterceptor, PipelineContext } from "./types";
 import { preToolDenial, toolContent, withPostToolLessons } from "./interceptorHooks";
 import { TOOL_SOURCE } from "../turn/waiting";
+import { rethrowIfFatal } from "../tools/fatal";
 
 export function emitToolResults(sink: TurnEventSink, messages: ToolMessage[]) {
   for (const message of messages) {
@@ -40,6 +41,7 @@ async function runTool(
     const content = output instanceof ToolMessage ? output.content : output;
     return typeof content === "string" ? content : JSON.stringify(content);
   } catch (error: unknown) {
+    rethrowIfFatal(error);
     return `Error executing ${call.name}: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
