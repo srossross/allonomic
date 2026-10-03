@@ -1,4 +1,3 @@
-import { parseShellResult } from "../tools/shellResult";
 import type { TurnEvent } from "./events";
 import { TOOL_SOURCE, USER_SOURCE, WORKER_SOURCE } from "./waiting";
 
@@ -22,7 +21,6 @@ export interface ProfileTurn {
   turnIndex: number;
   startMs: number;
   endMs?: number;
-  hasWaiting: boolean;
 }
 
 export interface Profile {
@@ -56,8 +54,8 @@ function updateTurn(
   };
 }
 
-function isLegacyTurn(profile: Profile, turnIndex: number): boolean {
-  return !profile.turns.find((turn) => turn.turnIndex === turnIndex)?.hasWaiting;
+function hasSpanSince(profile: Profile, source: string, startMs: number): boolean {
+  return profile.spans.some((span) => span.source === source && span.startMs >= startMs);
 }
 
 export function applyProfileEvent(profile: Profile, event: TurnEvent): Profile {
@@ -68,16 +66,13 @@ export function applyProfileEvent(profile: Profile, event: TurnEvent): Profile {
       const turns = profile.turns.filter((turn) => turn.turnIndex !== turnIndex);
       return {
         ...profile,
-        turns: [...turns, { turnIndex, startMs: atMs, hasWaiting: false }],
+        turns: [...turns, { turnIndex, startMs: atMs }],
         open: undefined,
         resume: undefined,
       };
     }
     case "waiting": {
-      const closed = updateTurn(closeOpen(profile, turnIndex, atMs), turnIndex, (turn) => ({
-        ...turn,
-        hasWaiting: true,
-      }));
+      const closed = closeOpen(profile, turnIndex, atMs);
       return {
         ...closed,
         open: { on: event.on, source: event.source ?? "other", hook: event.hook, startMs: atMs },
@@ -100,32 +95,27 @@ export function applyProfileEvent(profile: Profile, event: TurnEvent): Profile {
       };
     }
     case "model_step": {
-      if (profile.open?.source === WORKER_SOURCE) return closeOpen(profile, turnIndex, atMs);
-      if (!isLegacyTurn(profile, turnIndex)) return profile;
-      return addSpan(profile, {
-        turnIndex,
-        on: "Worker model",
-        source: WORKER_SOURCE,
-        startMs: atMs - event.durationMs,
-        durationMs: event.durationMs,
-      });
+      return profile.open?.source === WORKER_SOURCE ? closeOpen(profile, turnIndex, atMs) : profile;
     }
     case "tool_result": {
-      if (profile.open?.source === TOOL_SOURCE) return closeOpen(profile, turnIndex, atMs);
-      const { durationMs } = parseShellResult(event.content);
-      if (durationMs === undefined || !isLegacyTurn(profile, turnIndex)) return profile;
-      return addSpan(profile, {
-        turnIndex,
-        on: `Running ${event.name}`,
-        source: TOOL_SOURCE,
-        startMs: atMs - durationMs,
-        durationMs,
-      });
+      return profile.open?.source === TOOL_SOURCE ? closeOpen(profile, turnIndex, atMs) : profile;
     }
     case "governor_fork": {
       return profile.open?.source === event.interceptor
         ? closeOpen(profile, turnIndex, atMs)
         : profile;
+    }
+    case "interceptor_passed": {
+      const startMs = atMs - event.durationMs;
+      if (hasSpanSince(profile, event.interceptor, startMs)) return profile;
+      return addSpan(profile, {
+        turnIndex,
+        on: event.interceptor,
+        source: event.interceptor,
+        hook: event.phase,
+        startMs,
+        durationMs: event.durationMs,
+      });
     }
     case "turn_completed":
     case "turn_failed": {

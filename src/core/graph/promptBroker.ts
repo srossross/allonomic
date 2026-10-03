@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { TurnEventSink } from "../turn/events";
+import { USER_ACTOR, type TurnEventSink } from "../turn/events";
 import type { UserPromptValue } from "../../types";
 import type { AskUser } from "./types";
 import { StopError } from "./stopError";
@@ -15,18 +15,21 @@ export class PromptBroker {
           return;
         }
         const promptId = `prompt_${nanoid()}`;
+        const user = sink.scope(USER_ACTOR);
         const onAbort = () => {
           this.pending.delete(promptId);
+          user.close();
           reject(new StopError());
         };
         signal.addEventListener("abort", onAbort, { once: true });
         this.pending.set(promptId, (value) => {
           signal.removeEventListener("abort", onAbort);
           this.pending.delete(promptId);
-          sink.emit({ type: "prompt_answered", promptId, value });
+          user.emit({ type: "prompt_answered", promptId, value });
+          user.close();
           resolve(value);
         });
-        sink.emit({ type: "prompt_requested", promptId, toolCallId, prompt });
+        user.emit({ type: "prompt_requested", promptId, toolCallId, prompt });
       });
   }
 

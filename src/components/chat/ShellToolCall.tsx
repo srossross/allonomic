@@ -1,6 +1,6 @@
 import {
   Check,
-  ChevronRight,
+  Circle,
   CircleSlash,
   GraduationCap,
   Hourglass,
@@ -30,7 +30,7 @@ function ShellMode({ name, withLevel = false }: { name: string; withLevel?: bool
   );
 }
 
-function BlockedIcon({ interceptor }: { interceptor?: string }) {
+export function BlockedIcon({ interceptor }: { interceptor?: string }) {
   const Icon = interceptor === "ToolTeacher" ? GraduationCap : Shield;
   return (
     <span className="text-destructive relative flex size-3.5" title={`Blocked by ${interceptor}`}>
@@ -40,7 +40,19 @@ function BlockedIcon({ interceptor }: { interceptor?: string }) {
   );
 }
 
-function ShellStatus({ tc }: { tc: ToolCallInfo }) {
+function ShellModeDot({ name }: { name: string }) {
+  const mode = SHELL_MODES[name];
+  return (
+    <span
+      className={`mr-1.5 inline-flex h-3 shrink-0 items-center ${mode ? MODE_STYLES[mode].label : "text-muted-foreground"}`}
+      title={mode ?? name}
+    >
+      <Circle className="size-1.5 fill-current" />
+    </span>
+  );
+}
+
+export function ShellStatus({ tc }: { tc: ToolCallInfo }) {
   const parsed = shellResult(tc);
   switch (tc.status) {
     case "pending": {
@@ -65,34 +77,31 @@ function ShellStatus({ tc }: { tc: ToolCallInfo }) {
   }
 }
 
-export function ShellSummary({ tc, isExpanded }: { tc: ToolCallInfo; isExpanded: boolean }) {
+export function ShellSummary({ tc }: { tc: ToolCallInfo }) {
   const tcArguments = tc.args ?? {};
   const command = String(tcArguments.command || tcArguments.cmd || "");
   const blocked = tc.status === "blocked" ? "line-through opacity-60" : "";
   return (
-    <span className="grid w-full grid-cols-[1.75rem_4.5rem_1fr_auto] items-start gap-x-1.5 text-left text-xs">
-      <span className="flex h-4 items-center">
-        <ShellStatus tc={tc} />
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span
+        className={`text-foreground font-mono leading-4 font-semibold break-all whitespace-pre-wrap ${blocked}`}
+      >
+        {command}
       </span>
-      <span className="font-mono leading-4">
-        <ShellMode name={tc.name} />
-      </span>
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span
-          className={`text-foreground font-mono leading-4 font-semibold break-all whitespace-pre-wrap ${blocked}`}
-        >
-          {command}
-        </span>
+      <span className="flex items-center">
+        <ShellModeDot name={tc.name} />
         <ShellMeta tc={tc} />
       </span>
-      <ChevronRight
-        className={`text-muted-foreground mt-0.5 size-3 transition-transform duration-150 ${
-          isExpanded ? "rotate-90" : ""
-        }`}
-      />
     </span>
   );
 }
+
+const EXIT_LABELS = {
+  killed: "killed",
+  stopped: "stopped",
+  timeout: "timed out",
+  background: "moved to background",
+} as const;
 
 function formatDuration(ms: number) {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -108,7 +117,9 @@ function ShellMeta({ tc }: { tc: ToolCallInfo }) {
   return (
     <span className={meta}>
       <span className={isFailed ? "text-destructive" : ""}>
-        {parsed.exitCode === "killed" ? "killed" : `exit ${parsed.exitCode}`}
+        {typeof parsed.exitCode === "number"
+          ? `exit ${parsed.exitCode}`
+          : EXIT_LABELS[parsed.exitCode]}
       </span>
       {parsed.durationMs !== undefined && ` · ${formatDuration(parsed.durationMs)}`}
     </span>

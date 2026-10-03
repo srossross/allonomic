@@ -1,9 +1,26 @@
-import { ChevronRight, FileText, FileCode, Folder, Loader2, Wrench, X } from "lucide-react";
+import {
+  ArrowDownToLine,
+  FileText,
+  FileCode,
+  Folder,
+  Loader2,
+  Search,
+  Square,
+  SquareTerminal,
+  Wrench,
+  X,
+} from "lucide-react";
 import { isShellTool, type ToolCallInfo } from "@/types";
 import { EditFileDiff } from "./EditFileDiff";
 import { DIR_LIST_TOOLS, exploreSummary, FILE_READ_TOOLS, type ToolEntry } from "./exploreGroups";
 import { shellCallFailed } from "./shellStatus";
-import { ShellDetails, ShellSummary } from "./ShellToolCall";
+import { BlockedIcon, ShellDetails, ShellStatus, ShellSummary } from "./ShellToolCall";
+import { StreamRow } from "./StreamRow";
+
+export interface ToolControls {
+  stop(toolCallId: string): void;
+  background(toolCallId: string): void;
+}
 
 function isActive(tc: ToolCallInfo) {
   return tc.status === "running" || tc.status === "pending";
@@ -12,6 +29,20 @@ function isActive(tc: ToolCallInfo) {
 function verb(tc: ToolCallInfo, active: string, done: string) {
   if (tc.status === "blocked") return "Blocked";
   return isActive(tc) ? active : done;
+}
+
+const EDIT_TOOLS = new Set(["write_file", "replace_file_content", "edit_file"]);
+
+function toolIcon(tc: ToolCallInfo) {
+  if (isShellTool(tc)) return <SquareTerminal className="text-muted-foreground size-3.5" />;
+  if (tc.status === "blocked") return <BlockedIcon interceptor={tc.blockedBy} />;
+  if (FILE_READ_TOOLS.has(tc.name)) return <FileText className="size-3.5 text-sky-500" />;
+  if (EDIT_TOOLS.has(tc.name)) return <FileCode className="size-3.5 text-amber-500" />;
+  return DIR_LIST_TOOLS.has(tc.name) ? (
+    <Folder className="size-3.5 text-blue-500" />
+  ) : (
+    <Wrench className="text-muted-foreground size-3.5" />
+  );
 }
 
 function renderToolSummary(tc: ToolCallInfo) {
@@ -25,20 +56,18 @@ function renderToolSummary(tc: ToolCallInfo) {
         ? ""
         : `#L${tcArguments.startLine}${tcArguments.endLine === undefined ? "" : `-${tcArguments.endLine}`}`;
     return (
-      <span className="flex items-center gap-1.5 text-xs">
+      <span className="flex items-center gap-1.5">
         <span className="text-muted-foreground">{verb(tc, "Analyzing", "Analyzed")}</span>
-        <FileText className="size-3.5 shrink-0 text-sky-500" />
         <span className={`text-foreground font-semibold ${blocked}`}>{filePath}</span>
         {lineRange && <span className="text-muted-foreground font-mono">{lineRange}</span>}
       </span>
     );
   }
-  if (["write_file", "replace_file_content", "edit_file"].includes(tc.name)) {
+  if (EDIT_TOOLS.has(tc.name)) {
     const filePath = String(tcArguments.filePath || tcArguments.path || "file");
     return (
-      <span className="flex items-center gap-1.5 text-xs">
+      <span className="flex items-center gap-1.5">
         <span className="text-muted-foreground">{verb(tc, "Editing", "Edited")}</span>
-        <FileCode className="size-3.5 shrink-0 text-amber-500" />
         <span className={`text-foreground font-semibold ${blocked}`}>{filePath}</span>
         {tc.status === "rejected" && (
           <span className="bg-destructive/20 border-destructive/40 py-0.2 text-destructive text-2xs rounded border px-1.5 font-medium">
@@ -51,17 +80,15 @@ function renderToolSummary(tc: ToolCallInfo) {
   if (DIR_LIST_TOOLS.has(tc.name)) {
     const dir = String(tcArguments.directory || ".");
     return (
-      <span className="flex items-center gap-1.5 text-xs">
+      <span className="flex items-center gap-1.5">
         <span className="text-muted-foreground">{verb(tc, "Listing", "Listed")}</span>
-        <Folder className="size-3.5 shrink-0 text-blue-500" />
         <span className={`text-foreground font-semibold ${blocked}`}>{dir}</span>
       </span>
     );
   }
   return (
-    <span className="flex items-center gap-1.5 text-xs">
+    <span className="flex items-center gap-1.5">
       <span className="text-muted-foreground">{verb(tc, "Calling", "Called")}</span>
-      <Wrench className="text-muted-foreground size-3.5 shrink-0" />
       <span className={`text-foreground font-semibold ${blocked}`}>{tc.name}</span>
     </span>
   );
@@ -96,38 +123,59 @@ function FileContents({ tc }: { tc: ToolCallInfo }) {
 
 export function ToolCallRow({
   entry: { tc, toolId },
+  striped,
   isExpanded,
   onToggleTool,
+  toolControls,
 }: {
   entry: ToolEntry;
+  striped?: boolean;
   isExpanded: boolean;
   onToggleTool: (toolId: string) => void;
+  toolControls?: ToolControls;
 }) {
   const isShell = isShellTool(tc);
   const isFileTool = FILE_READ_TOOLS.has(tc.name) || DIR_LIST_TOOLS.has(tc.name);
   const isEdit = tc.name === "edit_file";
+  const toolCallId = tc.id;
+  const isControllable =
+    isShell && toolControls && toolCallId && (tc.status === "running" || tc.status === undefined);
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => onToggleTool(toolId)}
-        className={`group text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1.5 py-0.5 text-xs font-normal transition-colors ${
-          isShell ? "w-full select-text" : "select-none"
-        }`}
-      >
-        {isShell ? (
-          <ShellSummary tc={tc} isExpanded={isExpanded} />
-        ) : (
+    <div data-tool-call-id={toolCallId}>
+      <div className="flex items-start gap-1.5">
+        <StreamRow
+          status={isShell && <ShellStatus tc={tc} />}
+          icon={toolIcon(tc)}
+          striped={striped}
+          isExpanded={isExpanded}
+          onToggle={() => onToggleTool(toolId)}
+          selectable={isShell}
+        >
+          {isShell ? <ShellSummary tc={tc} /> : renderToolSummary(tc)}
+        </StreamRow>
+        {isControllable && (
           <>
-            {renderToolSummary(tc)}
-            <ChevronRight
-              className={`text-muted-foreground size-3 transition-transform duration-150 ${
-                isExpanded ? "rotate-90" : ""
-              }`}
-            />
+            <button
+              type="button"
+              onClick={() => toolControls.background(toolCallId)}
+              className="text-muted-foreground hover:text-foreground mt-0.5 flex cursor-pointer items-center py-0.5 transition-colors"
+              aria-label="Send to background"
+              title="Send to background"
+            >
+              <ArrowDownToLine className="size-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => toolControls.stop(toolCallId)}
+              className="text-muted-foreground hover:text-destructive mt-0.5 flex cursor-pointer items-center py-0.5 transition-colors"
+              aria-label="Stop command"
+              title="Stop command"
+            >
+              <Square className="size-3 fill-current" />
+            </button>
           </>
         )}
-      </button>
+      </div>
 
       {tc.status === "rejected" && (
         <div className="border-destructive/30 bg-destructive/5 text-destructive my-1 flex items-center gap-1.5 rounded-xs border px-2 py-1 text-xs">
@@ -180,13 +228,17 @@ export function ToolCallRow({
 export function ExploreGroup({
   id,
   entries,
+  striped,
   expandedToolIds,
   onToggleTool,
+  toolControls,
 }: {
   id: string;
   entries: ToolEntry[];
+  striped?: boolean;
   expandedToolIds: Set<string>;
   onToggleTool: (toolId: string) => void;
+  toolControls?: ToolControls;
 }) {
   const isExpanded = expandedToolIds.has(id);
   const active = entries.some(({ tc }) => isActive(tc));
@@ -195,21 +247,24 @@ export function ExploreGroup({
   ).length;
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => onToggleTool(id)}
-        className="group text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1.5 py-0.5 text-xs font-normal transition-colors select-none"
+      <StreamRow
+        icon={
+          active ? (
+            <Loader2 className="text-muted-foreground size-3.5 animate-spin" />
+          ) : (
+            <Search className="size-3.5" />
+          )
+        }
+        striped={striped}
+        isExpanded={isExpanded}
+        onToggle={() => onToggleTool(id)}
       >
-        {active && <Loader2 className="text-muted-foreground size-3.5 animate-spin" />}
-        <span className="text-muted-foreground">{active ? "Exploring…" : "Explored"}</span>
-        <span className="text-foreground font-semibold">{exploreSummary(entries)}</span>
-        {failed > 0 && <span className="text-destructive">· {failed} failed</span>}
-        <ChevronRight
-          className={`text-muted-foreground size-3 transition-transform duration-150 ${
-            isExpanded ? "rotate-90" : ""
-          }`}
-        />
-      </button>
+        <span className="flex items-center gap-1.5">
+          <span className="text-muted-foreground">{active ? "Exploring…" : "Explored"}</span>
+          <span className="text-foreground font-semibold">{exploreSummary(entries)}</span>
+          {failed > 0 && <span className="text-destructive">· {failed} failed</span>}
+        </span>
+      </StreamRow>
       {isExpanded && (
         <div className="border-border/80 mt-1 mb-2 space-y-1 border-l-2 pl-3">
           {entries.map((entry) => (
@@ -218,6 +273,7 @@ export function ExploreGroup({
               entry={entry}
               isExpanded={expandedToolIds.has(entry.toolId)}
               onToggleTool={onToggleTool}
+              toolControls={toolControls}
             />
           ))}
         </div>

@@ -1,0 +1,12 @@
+description: Worker summarized comments on PR #4, the merged PR on the current branch, without being told which PR.
+start:
+  turn: 1
+  segment: 11
+stop:
+  after: { type: governor_verdict, phase: exit }
+expect:
+  - { type: prompt_requested }
+judge: |
+  The governor should record the PR choice (#4, already merged, never named by the user) as an open
+  assumption and ask the user to confirm or change it.
+  Not fetching the inline review threads should be recorded as an open assumption the agent could check with its tools.

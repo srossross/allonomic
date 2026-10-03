@@ -25,7 +25,6 @@ import { useTurnQueue, type StartTurn } from "./useTurnQueue";
 import { settingsToTab } from "./tabSettings";
 import type { InterceptorSettings, SettingsPatch } from "@/core/config/settings";
 import type { RecoverableCall } from "@/core/turn/events";
-import { buildHistory } from "@/core/history";
 import { useTabsPersistence } from "./useTabsPersistence";
 import { useTurnDispatch } from "./useTurnDispatch";
 
@@ -64,7 +63,6 @@ export function useTabsManager(activeProject: Project) {
           threadId: tab.threadId,
           sessionId: tab.id,
           workspaceDir: projectPath,
-          history: buildHistory(tab.messages),
           calls,
           onEvent,
         })
@@ -185,7 +183,6 @@ export function useTabsManager(activeProject: Project) {
 
   const startTurn = useCallback<StartTurn>(
     async (tab, text, onTurnEvent) => {
-      const latest = tabsRef.current.find((t) => t.id === tab.id) ?? tab;
       setTabs((previous) => previous.map((t) => (t.id === tab.id ? { ...t, loading: true } : t)));
       const controller = new AbortController();
       abortControllersReference.current.set(tab.id, controller);
@@ -196,7 +193,6 @@ export function useTabsManager(activeProject: Project) {
             threadId: tab.threadId,
             sessionId: tab.id,
             workspaceDir: activeProject?.path,
-            history: buildHistory(latest.messages),
             signal: controller.signal,
             onEvent: (event) => {
               onEvent(event);

@@ -1,5 +1,6 @@
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
+import { invokeWithRetry } from "../retry";
 import type { StructuredTool } from "@langchain/core/tools";
 import type { Runtime } from "../ports";
 import type { InterceptorHook, PipelineContext } from "../graph/types";
@@ -8,7 +9,7 @@ import { loopFork, type GovernorModel } from "./fork";
 import { toForkMessages } from "./forkLog";
 import { buildInterceptorInstructions, loadPromptFile, type PromptSection } from "./prompts";
 import { loadRuleFiles, ruleSections, toContextFiles } from "../contextFiles";
-import { thinkingConfigFor } from "../graph/thinking";
+import { messageText, thinkingConfigFor } from "../graph/thinking";
 import type { ContextFileHook } from "../turn/events";
 
 type ForkPhase = "entry" | "exit";
@@ -32,7 +33,7 @@ export interface ForkRunnerOptions {
   apiKey?: string;
   createModel?: (tools: StructuredTool[]) => GovernorModel;
   getIntents: () => UserIntent[];
-  getSections: (request: { hideFalseCompletions?: boolean }) => PromptSection[];
+  getSections: () => PromptSection[];
 }
 
 export interface ForkRequest<T> {
@@ -45,7 +46,13 @@ export interface ForkRequest<T> {
   unknownTool?: (name: string) => string;
   phase: ForkPhase;
   appendix?: string;
-  hideFalseCompletions?: boolean;
+}
+
+export interface ListRequest {
+  context: PipelineContext;
+  conversation: BaseMessage[];
+  promptFile: string;
+  phase: ForkPhase;
 }
 
 export class GovernorForkRunner {
@@ -59,12 +66,34 @@ export class GovernorForkRunner {
   private createModel(tools: StructuredTool[]): GovernorModel {
     if (this.options.createModel) return this.options.createModel(tools);
     if (!this.options.apiKey) throw new Error("Missing Gemini API key for Governor");
-    return new ChatGoogleGenerativeAI({
+    const model = new ChatGoogleGenerativeAI({
       model: this.modelName,
       apiKey: this.options.apiKey,
       temperature: 0,
       thinkingConfig: thinkingConfigFor(this.thinkingBudget) ?? { includeThoughts: true },
-    }).bindTools(tools);
+    });
+    return tools.length > 0 ? model.bindTools(tools) : model;
+  }
+
+  async list(request: ListRequest): Promise<{ text: string; scratchpad: BaseMessage[] }> {
+    const { context, conversation, promptFile, phase } = request;
+    const template = await loadPromptFile(this.options.runtime, promptFile);
+    const scratchpad = [...conversation, new HumanMessage(template.text)];
+    const model = this.createModel([]);
+    const response = await invokeWithRetry(() => model.invoke(scratchpad));
+    scratchpad.push(response);
+    const text = messageText(response.content);
+    context.events.emit({
+      type: "governor_fork",
+      interceptor: this.options.name,
+      phase,
+      pass: promptFile,
+      messages: [
+        { role: "user", content: template.text },
+        { role: "ai", content: text, toolCalls: [] },
+      ],
+    });
+    return { text, scratchpad };
   }
 
   async run<T>(request: ForkRequest<T>): Promise<{ decided: T; scratchpad: BaseMessage[] }> {
@@ -78,7 +107,6 @@ export class GovernorForkRunner {
       unknownTool,
       phase,
       appendix,
-      hideFalseCompletions,
     } = request;
     const { runtime, name, getIntents, getSections } = this.options;
     const [preamble, template, rules] = await Promise.all([
@@ -99,7 +127,7 @@ export class GovernorForkRunner {
           preamble.text,
           [template.text, ...ruleSections(rules)].join("\n\n"),
           getIntents(),
-          getSections({ hideFalseCompletions })
+          getSections()
         ) + (appendix ? `\n${appendix}` : "")
       ),
     ];
@@ -121,7 +149,7 @@ export class GovernorForkRunner {
         interceptor: name,
         phase,
         pass: promptFile,
-        messages: toForkMessages(scratchpad.slice(conversation.length)),
+        messages: toForkMessages(scratchpad.slice(conversation.length + 1)),
       });
     }
   }

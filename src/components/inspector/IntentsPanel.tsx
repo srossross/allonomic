@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import type { UserIntent, FalseCompletion } from "@/core/governor/types";
+import type { UserIntent, Assumption } from "@/core/governor/types";
 import { reframeSatisfaction } from "@/lib/reframeSatisfaction";
 import type { InterceptorSettings } from "@/core/config/settings";
 import {
@@ -32,7 +32,7 @@ const EMPTY_INTERCEPTOR_SETTINGS: Record<string, InterceptorSettings> = {};
 export interface IntentsPanelProps {
   intentStack?: UserIntent[];
   completedIntents?: UserIntent[];
-  falseCompletions?: FalseCompletion[];
+  assumptions?: Assumption[];
   consoleEvents?: ConsoleEvent[];
   agentFiles?: AgentFileRow[];
   onClearConsole?: () => void;
@@ -56,7 +56,7 @@ export interface IntentsPanelProps {
 export function IntentsPanel({
   intentStack = [],
   completedIntents = [],
-  falseCompletions = [],
+  assumptions = [],
   consoleEvents = [],
   agentFiles = [],
   onClearConsole,
@@ -87,7 +87,7 @@ export function IntentsPanel({
   const [reframeErrors, setReframeErrors] = useState<Record<string, string>>({});
   const [selection, setSelection] = useState<{
     intentId: string;
-    falseCompletionId: string | null;
+    assumptionId: string | null;
   } | null>(null);
   const selectedIntent =
     selection &&
@@ -215,19 +215,19 @@ export function IntentsPanel({
             <IntentDetailView
               intent={selectedIntent}
               isDone={!intentStack.includes(selectedIntent)}
-              falseCompletions={falseCompletions.filter((r) => r.intent_id === selectedIntent.id)}
+              assumptions={assumptions.filter((a) => a.intent_id === selectedIntent.id)}
               reframed={reframedMap[selectedIntent.id]}
               reframeError={reframeErrors[selectedIntent.id]}
-              focusFalseCompletionId={selection?.falseCompletionId ?? null}
+              focusAssumptionId={selection?.assumptionId ?? null}
               onBack={() => setSelection(null)}
             />
           ) : (
             <IntentsTab
               intentStack={intentStack}
               completedIntents={completedIntents}
-              falseCompletions={falseCompletions}
-              onSelect={(intentId, falseCompletionId) =>
-                setSelection({ intentId, falseCompletionId: falseCompletionId ?? null })
+              assumptions={assumptions}
+              onSelect={(intentId, assumptionId) =>
+                setSelection({ intentId, assumptionId: assumptionId ?? null })
               }
             />
           ))}

@@ -7,6 +7,7 @@ function fold(timeline: Array<[number, TurnEventBody]>) {
     ...body,
     seq,
     turnIndex: 1,
+    actor: "worker",
     at: new Date(atMs).toISOString(),
   }));
   let profile = EMPTY_PROFILE;
@@ -46,7 +47,7 @@ describe("profile", () => {
       ["user", "make", 4000],
       ["tool", "Running shell_3_project_write", 1000],
     ]);
-    expect(profile.turns).toEqual([{ turnIndex: 1, startMs: 0, endMs: 11_000, hasWaiting: true }]);
+    expect(profile.turns).toEqual([{ turnIndex: 1, startMs: 0, endMs: 11_000 }]);
     expect(profile.spans.map((s) => s.hook)).toEqual([
       "onUserPrompt",
       undefined,
@@ -56,20 +57,29 @@ describe("profile", () => {
     ]);
   });
 
-  it("falls back to model_step and shell footer durations for turns without waiting events", () => {
-    const profile = fold([
+  it("spans a collapsed interceptor from its marker unless the live waits already did", () => {
+    const passed: TurnEventBody = {
+      type: "interceptor_passed",
+      interceptor: "ToolTeacher",
+      phase: "pre_tool",
+      durationMs: 1500,
+    };
+    const reloaded = fold([
       [0, { type: "turn_started", threadId: "t", prompt: "go" }],
-      [4000, { type: "model_step", stepId: "s", content: "", toolCalls: [], durationMs: 4000 }],
-      [
-        6000,
-        { type: "tool_result", toolCallId: "c", name: "shell", content: "ok\n[exit 0 in 1500ms]" },
-      ],
-      [6000, { type: "turn_completed", retries: 0, finalResponse: "" }],
+      [2000, passed],
     ]);
+    expect(spansOf(reloaded)).toEqual([["ToolTeacher", "ToolTeacher", 1500]]);
+    expect(reloaded.spans[0]).toMatchObject({ startMs: 500, hook: "pre_tool" });
 
-    expect(spansOf(profile)).toEqual([
-      ["worker", "Worker model", 4000],
-      ["tool", "Running shell", 1500],
+    const live = fold([
+      [0, { type: "turn_started", threadId: "t", prompt: "go" }],
+      [500, { type: "waiting", on: "ToolTeacher · pre_tool.md", source: "ToolTeacher" }],
+      [
+        2000,
+        { type: "governor_fork", interceptor: "ToolTeacher", pass: "pre_tool.md", messages: [] },
+      ],
+      [2000, passed],
     ]);
+    expect(spansOf(live)).toEqual([["ToolTeacher", "ToolTeacher · pre_tool.md", 1500]]);
   });
 });

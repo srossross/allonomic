@@ -1,7 +1,6 @@
 import type { BaseMessage } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { WorkflowModel } from "./workflow";
-import type { HistoryEntry } from "../history";
 import type { Runtime } from "../ports";
 import type { ExecutionModeSource } from "../tools/approval";
 import type { ContextFile, TurnEvent, TurnEventListener, TurnEventSink } from "../turn/events";
@@ -25,11 +24,11 @@ export interface AgentRunnerOptions {
   thinkingBudget?: number;
   executionMode?: ExecutionModeSource;
   startupWarnings?: { source: string; error: unknown }[];
+  loadHistory?: (beforeTurn: number) => Promise<BaseMessage[]>;
 }
 
 export interface RunOptions {
   signal?: AbortSignal;
-  history?: HistoryEntry[];
   onEvent?: TurnEventListener;
 }
 
@@ -43,4 +42,7 @@ export interface TurnResult {
   logPath?: string;
 }
 
-export type TurnRecord = PersistedTurnRecord & { sink: TurnEventSink };
+export type TurnRecord = PersistedTurnRecord & {
+  sink: TurnEventSink;
+  closeOpenScopes: () => void;
+};

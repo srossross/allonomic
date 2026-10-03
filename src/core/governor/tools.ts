@@ -1,23 +1,27 @@
 import { tool, StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { nanoid } from "nanoid";
-import { intentKindSchema, type GovernorAction } from "./types";
+import { intentKindSchema, specificitySchema, type GovernorAction } from "./types";
 
 export type GovernorDispatch = (action: GovernorAction) => Record<string, unknown>;
-
-export interface ExitVerdictSignal {
-  approved: boolean;
-}
 
 export function createGovernorPromptTools(
   dispatch: GovernorDispatch,
   signalFinish: (reasoning?: string) => void
 ): StructuredTool[] {
   const pushIntent = tool(
-    async ({ id, kind, description, completed_when }) =>
+    async ({ id, kind, description, completed_when, overstep, specificity }) =>
       dispatch({
         type: "push_intent",
-        intent: { id: id || `itnt_${nanoid()}`, kind, description, completed_when, changelog: [] },
+        intent: {
+          id: id || `itnt_${nanoid()}`,
+          kind,
+          description,
+          completed_when,
+          overstep,
+          specificity,
+          changelog: [],
+        },
       }),
     {
       name: "push_intent",
@@ -37,17 +41,34 @@ export function createGovernorPromptTools(
           .describe(
             "One short line: the observable condition that means this intent is satisfied (e.g. 'The user has been told whether you can list the directory')."
           ),
+        overstep: z
+          .string()
+          .describe(
+            "One short line: the concrete action that would go beyond what the user asked."
+          ),
+        specificity: specificitySchema.describe(
+          "How detailed the user's request is: 'low' leaves choices to the agent, 'high' spells out what is wanted."
+        ),
       }),
     }
   );
 
   const updateIntent = tool(
-    async ({ id, description, kind, completed_when, what_changed }) =>
-      dispatch({ type: "update_intent", id, description, kind, completed_when, what_changed }),
+    async ({ id, description, kind, completed_when, overstep, specificity, what_changed }) =>
+      dispatch({
+        type: "update_intent",
+        id,
+        description,
+        kind,
+        completed_when,
+        overstep,
+        specificity,
+        what_changed,
+      }),
     {
       name: "update_intent",
       description:
-        "Update an existing intent in place when the user corrects or refines the same goal. Keeps its ID and falseCompletions.",
+        "Update an existing intent in place when the user corrects or refines the same goal. Keeps its ID.",
       schema: z.object({
         id: z.string().describe("ID of the intent on the active stack to update."),
         description: z
@@ -59,6 +80,15 @@ export function createGovernorPromptTools(
           .string()
           .optional()
           .describe("One short line: revised condition that means this intent is satisfied."),
+        overstep: z
+          .string()
+          .optional()
+          .describe(
+            "One short line: the revised concrete action that would go beyond what the user asked, if it changed."
+          ),
+        specificity: specificitySchema
+          .optional()
+          .describe("Revised request specificity, if it changed."),
         what_changed: z
           .string()
           .describe("One short line: what the user changed about this goal and why."),
@@ -96,58 +126,6 @@ export function createGovernorPromptTools(
   );
 
   return [pushIntent, updateIntent, popIntent, finish];
-}
-
-export interface IntentBlocks {
-  resolve(intentId: string): string | null;
-  approve(): string | null;
-}
-
-export function createGovernorExitTools(
-  dispatch: GovernorDispatch,
-  blocks: IntentBlocks,
-  signalFinish: (result: ExitVerdictSignal) => void
-): StructuredTool[] {
-  const resolveIntent = tool(
-    async ({ id }) => {
-      const blocked = blocks.resolve(id);
-      return blocked
-        ? { status: "blocked", message: blocked }
-        : dispatch({ type: "resolve_intent", id });
-    },
-    {
-      name: "resolve_intent",
-      description:
-        "Mark a specific active intent as satisfied and move it to completed history. Fails while the intent has an open false completion.",
-      schema: z.object({
-        id: z
-          .string()
-          .describe("ID of the intent on the active stack that was satisfied (e.g. 'itnt_...')."),
-      }),
-    }
-  );
-
-  const finish = tool(
-    async ({ approved }) => {
-      const blocked = approved ? blocks.approve() : null;
-      if (blocked) return { status: "blocked", message: blocked };
-      signalFinish({ approved });
-      return { status: "finished", approved };
-    },
-    {
-      name: "finish",
-      description: "Signal final verdict of exit verification.",
-      schema: z.object({
-        approved: z
-          .boolean()
-          .describe(
-            "true if at least one intent was satisfied or progress was made without violating rules; false if no progress was made or rules were broken."
-          ),
-      }),
-    }
-  );
-
-  return [resolveIntent, finish];
 }
 
 export type PreToolDecision = { approved: true } | { approved: false; reason: string };

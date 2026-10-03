@@ -1,23 +1,34 @@
 import { open } from "@tauri-apps/plugin-dialog";
 
 import { useState, useCallback, useEffect } from "react";
-import type { Project } from "@/types";
+import type { GroupColor, Project, WorkspaceGroup, WorkspacesConfig } from "@/types";
 import {
   fetchWorkspacesApi,
   addWorkspaceApi,
   setActiveWorkspaceApi,
   renameWorkspaceApi,
   deleteWorkspaceApi,
+  createGroupApi,
+  updateGroupApi,
+  deleteGroupApi,
+  setWorkspaceGroupApi,
 } from "@/agent/api";
 import { alertError, withAlert } from "@/lib/alertError";
 
 export function useProjectManager(onNewTab?: () => void) {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [groups, setGroups] = useState<WorkspaceGroup[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string>("proj-1");
+
+  const applyConfig = useCallback((config: WorkspacesConfig) => {
+    setProjects(config.workspaces.filter((w) => !w.archived));
+    setGroups(config.groups);
+  }, []);
 
   useEffect(() => {
     async function loadWorkspaces() {
       const config = await fetchWorkspacesApi();
+      setGroups(config.groups);
       if (!config.workspaces || config.workspaces.length === 0) return;
       setProjects(config.workspaces.filter((w) => !w.archived));
       if (config.activeWorkspaceId) setActiveProjectId(config.activeWorkspaceId);
@@ -67,6 +78,55 @@ export function useProjectManager(onNewTab?: () => void) {
     }
   }, []);
 
+  const handleCreateGroup = useCallback(
+    async (name: string, color: GroupColor): Promise<string | undefined> => {
+      try {
+        const config = await createGroupApi(name, color);
+        applyConfig(config);
+        return config.groups.at(-1)?.id;
+      } catch (error) {
+        alertError("Create group")(error);
+        return undefined;
+      }
+    },
+    [applyConfig]
+  );
+
+  const handleUpdateGroup = useCallback(
+    async (id: string, patch: Partial<Omit<WorkspaceGroup, "id">>) => {
+      setGroups((previous) => previous.map((g) => (g.id === id ? { ...g, ...patch } : g)));
+      try {
+        applyConfig(await updateGroupApi(id, patch));
+      } catch (error) {
+        alertError("Update group")(error);
+      }
+    },
+    [applyConfig]
+  );
+
+  const handleDeleteGroup = useCallback(
+    async (id: string) => {
+      try {
+        applyConfig(await deleteGroupApi(id));
+      } catch (error) {
+        alertError("Delete group")(error);
+      }
+    },
+    [applyConfig]
+  );
+
+  const handleSetProjectGroup = useCallback(
+    async (projectId: string, groupId: string | undefined) => {
+      setProjects((previous) => previous.map((p) => (p.id === projectId ? { ...p, groupId } : p)));
+      try {
+        applyConfig(await setWorkspaceGroupApi(projectId, groupId));
+      } catch (error) {
+        alertError("Move project to group")(error);
+      }
+    },
+    [applyConfig]
+  );
+
   const triggerDirPicker = useCallback(async () => {
     const selectedPath = await open({
       directory: true,
@@ -107,6 +167,11 @@ export function useProjectManager(onNewTab?: () => void) {
     setActiveProjectId: handleSelectProject,
     handleRenameProject,
     handleDeleteProject,
+    groups,
+    handleCreateGroup,
+    handleUpdateGroup,
+    handleDeleteGroup,
+    handleSetProjectGroup,
     triggerDirPicker,
   };
 }

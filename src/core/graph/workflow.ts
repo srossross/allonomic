@@ -26,8 +26,11 @@ import {
   thoughtSignatureFor,
 } from "./thinking";
 import { readPipelineContext, type AgentInterceptor } from "./types";
-import { preToolDenial, withPostToolLessons } from "./interceptorHooks";
+import { inScope, preToolDenial, withPostToolLessons } from "./interceptorHooks";
+import { USER_ACTOR } from "../turn/events";
+import { briefText, exitRetryText, type Brief } from "../turn/ops";
 import { emitToolResults } from "./recovery";
+import { userPromptMessage } from "./userPrompt";
 
 type State = typeof MessagesAnnotation.State;
 
@@ -68,12 +71,14 @@ async function inboxNode(_state: State, config: LangGraphRunnableConfig) {
     context.events.emit({ type: "resumed" });
   }
   const delivered = control.drain();
-  for (const { id, text } of delivered)
-    context.events.emit({ type: "prompt_delivered", queueId: id, text });
+  if (delivered.length > 0) {
+    const user = context.events.scope(USER_ACTOR);
+    for (const { id, text } of delivered)
+      user.emit({ type: "prompt_delivered", queueId: id, text });
+    user.close();
+  }
   return {
-    messages: delivered.map(
-      ({ id, text }) => new HumanMessage({ content: text, additional_kwargs: { queueId: id } })
-    ),
+    messages: delivered.map(({ id, text }) => userPromptMessage(text, { queueId: id })),
   };
 }
 
@@ -96,12 +101,29 @@ export function createCompiledWorkflow(
     const lastMessage = state.messages.at(-1);
     if (!lastMessage || lastMessage.type !== "human") return {};
 
-    const briefs: string[] = [];
+    const briefs: Brief[] = [];
     for (const interceptor of interceptors) {
-      const brief = await interceptor.onUserPrompt?.(interceptorInput(state), context);
-      if (brief) briefs.push(`[${interceptor.name}]: ${brief}`);
+      const { onUserPrompt } = interceptor;
+      if (!onUserPrompt) continue;
+      const brief = await inScope(
+        context,
+        interceptor,
+        { phase: "entry" },
+        async (scoped) => {
+          const result = await onUserPrompt.call(interceptor, interceptorInput(state), scoped);
+          if (result)
+            scoped.events.emit({
+              type: "governor_brief",
+              interceptor: interceptor.name,
+              ...result,
+            });
+          return result;
+        },
+        (result) => !result
+      );
+      if (brief) briefs.push({ interceptor: interceptor.name, text: brief.text });
     }
-    return briefs.length === 0 ? {} : { messages: [new HumanMessage(briefs.join("\n\n"))] };
+    return briefs.length === 0 ? {} : { messages: [new HumanMessage(briefText(briefs))] };
   };
 
   const callModel = async (state: State, config: LangGraphRunnableConfig) => {
@@ -142,6 +164,7 @@ export function createCompiledWorkflow(
     const last = state.messages.at(-1);
     const calls = last && isAIMessage(last) ? (last.tool_calls ?? []) : [];
 
+    await context.recordSettings?.();
     const verdicts = await Promise.all(
       calls.map((call) => preToolDenial(interceptors, call, conversation, context))
     );
@@ -184,22 +207,36 @@ export function createCompiledWorkflow(
     const feedback: string[] = [];
 
     for (const interceptor of interceptors) {
-      if (!interceptor.onAgentFinish) continue;
-      const verdict = await interceptor.onAgentFinish(interceptorInput(state), context);
+      const { onAgentFinish } = interceptor;
+      if (!onAgentFinish) continue;
+      const verdict = await inScope(
+        context,
+        interceptor,
+        { phase: "exit" },
+        (scoped) => onAgentFinish.call(interceptor, interceptorInput(state), scoped),
+        (result) => result.allowFinish
+      );
       if (!verdict.allowFinish)
         feedback.push(`\n[${interceptor.name} Feedback]: ${verdict.feedback ?? ""}`);
     }
 
-    if (feedback.length === 0) return {};
+    if (feedback.length === 0) {
+      for (const interceptor of interceptors) {
+        const { onPresent } = interceptor;
+        if (!onPresent) continue;
+        await inScope(
+          context,
+          interceptor,
+          { phase: "present" },
+          (scoped) => onPresent.call(interceptor, interceptorInput(state), scoped),
+          () => false
+        );
+      }
+      return {};
+    }
     const combined = feedback.join("");
     context.events.emit({ type: "exit_retry", feedback: combined });
-    return {
-      messages: [
-        new HumanMessage(
-          `Your output did not satisfy the exit criteria:${combined}\nPlease address this feedback to complete the task.`
-        ),
-      ],
-    };
+    return { messages: [new HumanMessage(exitRetryText(combined))] };
   };
 
   const workflow = new StateGraph(MessagesAnnotation)

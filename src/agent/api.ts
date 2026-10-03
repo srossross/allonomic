@@ -1,8 +1,12 @@
-import type { HistoryEntry } from "../core/history";
 import { tauriRuntime } from "../adapters/tauri/runtime";
 import {
   runAgentPrompt,
   stopAgentPrompt,
+  didStopToolCall,
+  didBackgroundToolCall,
+  subscribeJobs,
+  jobsFor,
+  killSessionJobs,
   pauseAgent,
   resumeAgent,
   enqueueAgentPrompt,
@@ -30,6 +34,8 @@ import {
 import type {
   WorkspacesConfig,
   WorkspaceItem,
+  WorkspaceGroup,
+  GroupColor,
   WorkspaceState,
   SessionMetadata,
   RehydratedSession,
@@ -38,12 +44,17 @@ import type {
 } from "@/types";
 import { loadModels } from "../core/models";
 import type { RecoverableCall, TurnEventListener } from "@/core/turn/events";
+import type { JobListener } from "@/core/jobs/backgroundJobs";
 import {
   loadWorkspacesConfig,
   addOrUpdateWorkspace,
   setActiveWorkspaceId,
   renameWorkspace,
   deleteWorkspace,
+  createGroup,
+  updateGroup,
+  deleteGroup,
+  setWorkspaceGroup,
 } from "../persistence/workspaces";
 import {
   loadWorkspaceState,
@@ -59,7 +70,6 @@ interface AgentCallParams {
   threadId: string;
   sessionId: string;
   workspaceDir?: string;
-  history?: HistoryEntry[];
   signal?: AbortSignal;
   onEvent?: TurnEventListener;
 }
@@ -78,6 +88,53 @@ export async function runAgentPromptApi({
 
 export async function stopAgentPromptApi(threadId: string, sessionId?: string): Promise<void> {
   await stopAgentPrompt(threadId, sessionId);
+}
+
+export async function subscribeJobsApi(
+  workspaceDir: string | undefined,
+  sessionId: string,
+  listener: JobListener
+) {
+  return await subscribeJobs(workspaceDir, sessionId, listener);
+}
+
+export async function killJobApi(workspaceDir: string | undefined, sessionId: string, id: string) {
+  const jobs = await jobsFor(workspaceDir, sessionId);
+  await jobs.kill(id);
+}
+
+export async function dismissJobApi(
+  workspaceDir: string | undefined,
+  sessionId: string,
+  id: string
+) {
+  const jobs = await jobsFor(workspaceDir, sessionId);
+  await jobs.dismiss(id);
+}
+
+export async function restartInterruptedJobsApi(
+  workspaceDir: string | undefined,
+  sessionId: string,
+  indices: number[]
+) {
+  const jobs = await jobsFor(workspaceDir, sessionId);
+  await jobs.restartInterrupted(indices);
+}
+
+export async function dismissInterruptedJobsApi(
+  workspaceDir: string | undefined,
+  sessionId: string
+) {
+  const jobs = await jobsFor(workspaceDir, sessionId);
+  await jobs.dismissInterrupted();
+}
+
+export function didBackgroundToolCallApi(sessionId: string, toolCallId: string): boolean {
+  return didBackgroundToolCall(sessionId, toolCallId);
+}
+
+export function didStopToolCallApi(sessionId: string, toolCallId: string): boolean {
+  return didStopToolCall(sessionId, toolCallId);
 }
 
 export function pauseAgentApi(threadId: string, sessionId: string): void {
@@ -148,6 +205,28 @@ export async function deleteWorkspaceApi(workspaceId: string): Promise<Workspace
   return await deleteWorkspace(workspaceId);
 }
 
+export async function createGroupApi(name: string, color: GroupColor): Promise<WorkspacesConfig> {
+  return await createGroup(name, color);
+}
+
+export async function updateGroupApi(
+  groupId: string,
+  patch: Partial<Omit<WorkspaceGroup, "id">>
+): Promise<WorkspacesConfig> {
+  return await updateGroup(groupId, patch);
+}
+
+export async function deleteGroupApi(groupId: string): Promise<WorkspacesConfig> {
+  return await deleteGroup(groupId);
+}
+
+export async function setWorkspaceGroupApi(
+  workspaceId: string,
+  groupId: string | undefined
+): Promise<WorkspacesConfig> {
+  return await setWorkspaceGroup(workspaceId, groupId);
+}
+
 // Workspace State API (<workspaceDir>/.allonomic/workspace.yml)
 export async function fetchWorkspaceStateApi(
   workspaceDir: string
@@ -194,6 +273,7 @@ export async function closeSessionApi(
   sessionId: string,
   title: string
 ): Promise<void> {
+  await killSessionJobs(sessionId);
   const now = new Date().toISOString();
   const existing = await loadSessionMetadata(tauriRuntime.fs, workspaceDir, sessionId);
   await saveSessionMetadata(tauriRuntime.fs, workspaceDir, {

@@ -5,9 +5,13 @@ import { createFilesystemTools } from "./filesystem";
 import { createShellTools } from "./shell";
 import { createPermissionTools } from "./permissions";
 import { createWebTools } from "./web";
+import type { ToolStops } from "./toolStops";
+import type { BackgroundJobs } from "../jobs/backgroundJobs";
 
 export interface AgentToolOptions {
   sessionId?: string;
+  stops?: ToolStops;
+  jobs?: BackgroundJobs;
 }
 
 export function createAgentTools(

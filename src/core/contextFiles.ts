@@ -10,16 +10,24 @@ export interface LoadedFile {
   text: string;
   missing: boolean;
   loadedAt: string;
+  sha256?: string;
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export async function readContextFile(runtime: Runtime, path: string): Promise<LoadedFile> {
   const loadedAt = new Date().toISOString();
+  let text: string;
   try {
-    return { path, text: await runtime.fs.readText(path), missing: false, loadedAt };
+    text = await runtime.fs.readText(path);
   } catch (error) {
     if (!isNotFound(error)) throw error;
     return { path, text: "", missing: true, loadedAt };
   }
+  return { path, text, missing: false, loadedAt, sha256: await sha256Hex(text) };
 }
 
 export async function userConfigDir(runtime: Runtime): Promise<string> {
@@ -49,11 +57,12 @@ export function ruleSections(files: LoadedFile[]): string[] {
 }
 
 export function toContextFiles(files: LoadedFile[]): ContextFile[] {
-  return files.map(({ path, text, missing, loadedAt }) => ({
+  return files.map(({ path, text, missing, loadedAt, sha256 }) => ({
     path,
     size: text.length,
     missing,
     loadedAt,
+    sha256,
   }));
 }
 

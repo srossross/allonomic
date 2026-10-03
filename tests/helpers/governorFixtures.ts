@@ -1,18 +1,25 @@
-import type { FalseCompletion } from "../../src/core/governor/types";
+import type { Assumption } from "../../src/core/governor/types";
 
 export function parse(result: unknown) {
   return typeof result === "string" ? JSON.parse(result) : result;
 }
 
-export const falseCompletion = (id: string, intent_id: string): FalseCompletion => ({
+export const assumption = (
+  id: string,
+  intent_id: string,
+  overrides: Partial<Assumption> = {}
+): Assumption => ({
   id,
   intent_id,
-  summary: `summary ${id}`,
-  completes_as: "c",
-  false_because: "f",
-  check: "k",
+  text: `text ${id}`,
+  status: "open",
   evidence: null,
-  resolution: null,
-  resolution_reason: null,
-  still_assumed: null,
+  resolver: "user",
+  impact_category: "wrong_answer",
+  user_would_care: false,
+  request: null,
+  depends_on: null,
+  candidates: "one",
+  impact_cost: "low",
+  ...overrides,
 });

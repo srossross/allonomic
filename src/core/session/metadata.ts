@@ -1,9 +1,19 @@
 import YAML from "yaml";
+import { z } from "zod";
 import type { DirEntry, FileStore } from "../ports";
 import { isNotFound } from "../fsErrors";
 import { join, dirname } from "../paths";
 import type { SessionMetadata } from "../../types/persistence";
-import { DEFAULT_CHAT_TITLE } from "../../types/tab";
+
+const metadataFileSchema = z.object({
+  session_id: z.string(),
+  title: z.string(),
+  closed: z.boolean(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  turn_count: z.number().optional(),
+  last_prompt: z.string().optional(),
+});
 
 function sessionsRootFor(workspaceDir: string): string {
   return join(workspaceDir, ".allonomic", "sessions");
@@ -34,38 +44,15 @@ export async function loadSessionMetadata(
   const filePath = getSessionMetadataPath(workspaceDir, sessionId);
   const raw = await readIfExists(fs, filePath);
   if (raw === undefined) return null;
-  const data: unknown = YAML.parse(raw);
-  if (!data || typeof data !== "object") return null;
-
-  const session_id = Reflect.get(data, "session_id");
-  const sessionIdField = Reflect.get(data, "sessionId");
-  const title = Reflect.get(data, "title");
-  const closed = Reflect.get(data, "closed");
-  const created_at = Reflect.get(data, "created_at");
-  const createdAt = Reflect.get(data, "createdAt");
-  const updated_at = Reflect.get(data, "updated_at");
-  const updatedAt = Reflect.get(data, "updatedAt");
-  const turn_count = Reflect.get(data, "turn_count");
-  const last_prompt = Reflect.get(data, "last_prompt");
-
+  const data = metadataFileSchema.parse(YAML.parse(raw));
   return {
-    sessionId: String(session_id || sessionIdField || sessionId),
-    title: typeof title === "string" ? title : DEFAULT_CHAT_TITLE,
-    closed: closed === true,
-    createdAt:
-      typeof created_at === "string"
-        ? created_at
-        : typeof createdAt === "string"
-          ? createdAt
-          : new Date().toISOString(),
-    updatedAt:
-      typeof updated_at === "string"
-        ? updated_at
-        : typeof updatedAt === "string"
-          ? updatedAt
-          : new Date().toISOString(),
-    turnCount: typeof turn_count === "number" ? turn_count : undefined,
-    lastPrompt: typeof last_prompt === "string" ? last_prompt : undefined,
+    sessionId: data.session_id,
+    title: data.title,
+    closed: data.closed,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+    turnCount: data.turn_count,
+    lastPrompt: data.last_prompt || undefined,
   };
 }
 

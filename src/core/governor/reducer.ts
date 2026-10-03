@@ -1,16 +1,10 @@
-import { nanoid } from "nanoid";
-import {
-  intentKindSchema,
-  type GovernorAction,
-  type GovernorState,
-  type IntentKind,
-  type UserIntent,
+import type {
+  Assumption,
+  GovernorAction,
+  GovernorState,
+  IntentKind,
+  UserIntent,
 } from "./types";
-import {
-  addFalseCompletion,
-  declareNoFalseCompletions,
-  resolveFalseCompletion,
-} from "./falseCompletionReducer";
 
 export interface GovernorActionOutcome {
   state: GovernorState;
@@ -20,7 +14,8 @@ export interface GovernorActionOutcome {
 export const EMPTY_GOVERNOR_STATE: GovernorState = {
   intent_stack: [],
   completed_intents: [],
-  false_completions: [],
+  assumptions: [],
+  resolved_since_prompt: [],
 };
 
 function replaceIntent(stack: UserIntent[], index: number, next: UserIntent): UserIntent[] {
@@ -45,6 +40,8 @@ function updateIntent(
     description?: string;
     kind?: IntentKind;
     completed_when?: string;
+    overstep?: string;
+    specificity?: UserIntent["specificity"];
     what_changed?: string;
   }
 ): GovernorActionOutcome {
@@ -61,6 +58,8 @@ function updateIntent(
     description: changes.description ?? current.description,
     kind: changes.kind ?? current.kind,
     completed_when: changes.completed_when ?? current.completed_when,
+    overstep: changes.overstep ?? current.overstep,
+    specificity: changes.specificity ?? current.specificity,
     changelog: changes.what_changed
       ? [...current.changelog, changes.what_changed]
       : current.changelog,
@@ -108,6 +107,7 @@ function resolveIntent(state: GovernorState, id: string): GovernorActionOutcome 
       ...state,
       intent_stack: state.intent_stack.filter((intent) => intent !== completed),
       completed_intents: [...state.completed_intents, completed],
+      resolved_since_prompt: [...state.resolved_since_prompt, completed],
     },
     result: {
       status: "resolved",
@@ -115,6 +115,47 @@ function resolveIntent(state: GovernorState, id: string): GovernorActionOutcome 
       description: completed.description,
       message: `Intent '${completed.id}' marked as satisfied and moved to history.`,
     },
+  };
+}
+
+function recordAssumption(state: GovernorState, assumption: Assumption): GovernorActionOutcome {
+  if (state.intent_stack.every((intent) => intent.id !== assumption.intent_id)) {
+    return {
+      state,
+      result: {
+        status: "not_found",
+        message: `Intent '${assumption.intent_id}' is not on the active stack.`,
+      },
+    };
+  }
+  return {
+    state: { ...state, assumptions: [...state.assumptions, assumption] },
+    result: { status: "recorded", id: assumption.id },
+  };
+}
+
+function resolveAssumption(
+  state: GovernorState,
+  id: string,
+  evidence: string
+): GovernorActionOutcome {
+  const assumption = state.assumptions.find((a) => a.id === id);
+  if (!assumption) {
+    return { state, result: { status: "not_found", message: `Assumption '${id}' not found.` } };
+  }
+  if (assumption.status === "resolved") {
+    return {
+      state,
+      result: { status: "already_resolved", message: `Assumption '${id}' is already resolved.` },
+    };
+  }
+  const resolved: Assumption = { ...assumption, status: "resolved", evidence };
+  return {
+    state: {
+      ...state,
+      assumptions: state.assumptions.map((a) => (a.id === id ? resolved : a)),
+    },
+    result: { status: "resolved", id },
   };
 }
 
@@ -131,24 +172,19 @@ export function applyGovernorAction(
         description: action.description,
         kind: action.kind,
         completed_when: action.completed_when,
+        overstep: action.overstep,
+        specificity: action.specificity,
         what_changed: action.what_changed,
       });
     }
-    case "add_false_completion": {
-      return addFalseCompletion(state, action.falseCompletion);
+    case "record_assumption": {
+      return recordAssumption(state, action.assumption);
     }
-    case "no_false_completions": {
-      return declareNoFalseCompletions(state, action.intent_id);
+    case "clear_assumptions": {
+      return { state: { ...state, assumptions: [] }, result: { status: "cleared" } };
     }
-    case "resolve_false_completion": {
-      return resolveFalseCompletion(
-        state,
-        action.id,
-        action.resolution,
-        action.evidence,
-        action.reason,
-        action.still_assumed
-      );
+    case "resolve_assumption": {
+      return resolveAssumption(state, action.id, action.evidence);
     }
     case "pop_intent": {
       return popIntent(state, action.id);
@@ -156,41 +192,8 @@ export function applyGovernorAction(
     case "resolve_intent": {
       return resolveIntent(state, action.id);
     }
-  }
-}
-
-function stringArg(args: Record<string, unknown>, key: string): string | undefined {
-  const value = args[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-export function governorActionFromCall(
-  name: string,
-  args: Record<string, unknown>
-): GovernorAction | null {
-  switch (name) {
-    case "push_intent": {
-      const kind = intentKindSchema.safeParse(args.kind);
-      return {
-        type: "push_intent",
-        intent: {
-          id: stringArg(args, "id") || `itnt_${nanoid()}`,
-          kind: kind.success ? kind.data : "other",
-          description: stringArg(args, "description") ?? "",
-          completed_when: stringArg(args, "completed_when") ?? null,
-          changelog: [],
-        },
-      };
-    }
-    case "pop_intent": {
-      return { type: "pop_intent", id: stringArg(args, "id") };
-    }
-    case "resolve_intent": {
-      const id = stringArg(args, "id");
-      return id === undefined ? null : { type: "resolve_intent", id };
-    }
-    default: {
-      return null;
+    case "begin_prompt": {
+      return { state: { ...state, resolved_since_prompt: [] }, result: { status: "begun" } };
     }
   }
 }

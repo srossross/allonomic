@@ -1,6 +1,6 @@
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { HumanMessage } from "@langchain/core/messages";
+import { userPromptMessage } from "../../core/graph/userPrompt";
 import { createWorkerAgent } from "../worker";
 import { createNodeRuntime } from "../../adapters/node/runtime";
 
@@ -23,7 +23,10 @@ async function main() {
         break;
       }
 
-      const result = await agent.compiled.invoke({ messages: [new HumanMessage(trimmed)] }, config);
+      const result = await agent.compiled.invoke(
+        { messages: [userPromptMessage(trimmed)] },
+        config
+      );
 
       const lastMessage = result.messages.at(-1);
       const content = lastMessage

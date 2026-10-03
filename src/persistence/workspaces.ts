@@ -2,8 +2,10 @@ import { readTextFile, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
 import { join, resolve, dirname } from "@tauri-apps/api/path";
 import YAML from "yaml";
 import { tauriRuntime } from "../adapters/tauri/runtime";
-import type { WorkspacesConfig, WorkspaceItem } from "../types/persistence";
+import type { WorkspacesConfig, WorkspaceItem, WorkspaceGroup } from "../types/persistence";
+import type { GroupColor } from "../types/groupColors";
 import { isNotFound } from "../core/fsErrors";
+import { parseGroups, readGroupId, removeGroup, serializeGroups } from "./workspaceGroups";
 
 async function getWorkspacesFilePath(): Promise<string> {
   const configDir = await tauriRuntime.paths.appConfig();
@@ -25,6 +27,7 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
         Reflect.get(data, "active_workspace_id") || Reflect.get(data, "activeWorkspaceId");
       const activeWorkspaceId = typeof activeRaw === "string" ? activeRaw : undefined;
 
+      const groups = parseGroups(Reflect.get(data, "groups"));
       const workspacesRaw = Reflect.get(data, "workspaces");
       const validWorkspaces: WorkspaceItem[] = [];
 
@@ -65,18 +68,20 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
                 typeof name === "string" ? name : resolvedPath.split(/[/\\]/).pop() || resolvedPath,
               lastOpened: readLastOpened(val),
               archived: Reflect.get(val, "archived") === true,
+              groupId: readGroupId(val, groups),
             });
           }
         }
 
-        if (validWorkspaces.length > 0) {
+        if (validWorkspaces.length > 0 || groups.length > 0) {
           const resolvedActiveId = activeWorkspaceId?.startsWith("proj-")
             ? undefined
             : activeWorkspaceId;
 
           return {
-            activeWorkspaceId: resolvedActiveId || validWorkspaces[0].path,
+            activeWorkspaceId: resolvedActiveId || validWorkspaces[0]?.path,
             workspaces: validWorkspaces,
+            groups,
           };
         }
       }
@@ -95,6 +100,7 @@ export async function loadWorkspacesConfig(): Promise<WorkspacesConfig> {
   const initialConfig: WorkspacesConfig = {
     activeWorkspaceId: undefined,
     workspaces: [],
+    groups: [],
   };
 
   await saveWorkspacesConfig(initialConfig);
@@ -113,11 +119,13 @@ async function saveWorkspacesConfig(config: WorkspacesConfig): Promise<void> {
       name: w.name,
       ...(w.lastOpened && { last_opened: w.lastOpened }),
       ...(w.archived && { archived: true }),
+      ...(w.groupId && { group: w.groupId }),
     };
   }
 
   const yml = YAML.stringify({
     active_workspace_id: config.activeWorkspaceId,
+    groups: serializeGroups(config.groups),
     workspaces: workspacesMap,
   });
   await writeTextFile(filePath, yml);
@@ -133,6 +141,7 @@ export async function addOrUpdateWorkspace(workspace: WorkspaceItem): Promise<Wo
 
   const updatedItem: WorkspaceItem = {
     ...workspace,
+    groupId: workspace.groupId ?? config.workspaces[index]?.groupId,
     lastOpened: new Date().toISOString(),
   };
 
@@ -190,5 +199,45 @@ export async function deleteWorkspace(workspaceId: string): Promise<WorkspacesCo
     config.activeWorkspaceId = activeWorkspaces.length > 0 ? activeWorkspaces[0].path : undefined;
   }
   await saveWorkspacesConfig(config);
+  return config;
+}
+
+export async function createGroup(name: string, color: GroupColor): Promise<WorkspacesConfig> {
+  const config = await loadWorkspacesConfig();
+  config.groups.push({ id: `g-${crypto.randomUUID()}`, name, color });
+  await saveWorkspacesConfig(config);
+  return config;
+}
+
+export async function updateGroup(
+  groupId: string,
+  patch: Partial<Omit<WorkspaceGroup, "id">>
+): Promise<WorkspacesConfig> {
+  const config = await loadWorkspacesConfig();
+  const group = config.groups.find((g) => g.id === groupId);
+  if (group) {
+    Object.assign(group, patch);
+    await saveWorkspacesConfig(config);
+  }
+  return config;
+}
+
+export async function deleteGroup(groupId: string): Promise<WorkspacesConfig> {
+  const config = await loadWorkspacesConfig();
+  removeGroup(config, groupId);
+  await saveWorkspacesConfig(config);
+  return config;
+}
+
+export async function setWorkspaceGroup(
+  workspaceId: string,
+  groupId: string | undefined
+): Promise<WorkspacesConfig> {
+  const config = await loadWorkspacesConfig();
+  const found = config.workspaces.find((w) => w.id === workspaceId || w.path === workspaceId);
+  if (found && (groupId === undefined || config.groups.some((g) => g.id === groupId))) {
+    found.groupId = groupId;
+    await saveWorkspacesConfig(config);
+  }
   return config;
 }

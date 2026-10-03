@@ -10,6 +10,7 @@ import { appConfigDir, homeDir, resolve, resolveResource } from "@tauri-apps/api
 import { Command } from "@tauri-apps/plugin-shell";
 import { fetch } from "@tauri-apps/plugin-http";
 import type { FileStore, Http, Shell, Paths, Runtime } from "@/core/ports";
+import { executeBySpawn, GROUP_WRAPPER, PGID_MARKER } from "@/core/superviseProcess";
 
 const fs: FileStore = {
   readText: (path) => readTextFile(path),
@@ -24,11 +25,41 @@ const fs: FileStore = {
   copyFile: (source, destination) => copyFile(source, destination),
 };
 
+function asLine(line: string) {
+  return line.endsWith("\n") ? line : `${line}\n`;
+}
+
+const spawnProcess: Shell["spawn"] = async (program, args, { cwd, onOutput }) => {
+  const command = Command.create("sh", ["-c", GROUP_WRAPPER, "sh", program, ...args], { cwd });
+  let pgid: string | undefined;
+  command.stdout.on("data", (line: string) => onOutput("stdout", asLine(line)));
+  command.stderr.on("data", (line: string) => {
+    if (pgid === undefined && line.startsWith(PGID_MARKER)) {
+      pgid = line.slice(PGID_MARKER.length).trim();
+      return;
+    }
+    onOutput("stderr", asLine(line));
+  });
+  const exited = new Promise<number | null>((resolve) => {
+    command.on("close", ({ code }) => resolve(code));
+    command.on("error", (error) => {
+      onOutput("stderr", error);
+      resolve(1);
+    });
+  });
+  await command.spawn();
+  return {
+    exited,
+    kill: async (signal) => {
+      if (pgid === undefined) return;
+      await Command.create("sh", ["-c", 'kill -s "$0" -- "-$1"', signal.slice(3), pgid]).execute();
+    },
+  };
+};
+
 const shell: Shell = {
-  execute: async (program, args) => {
-    const { code, stdout, stderr } = await Command.create(program, args).execute();
-    return { code, stdout, stderr };
-  },
+  spawn: spawnProcess,
+  execute: (program, args, options) => executeBySpawn(spawnProcess, program, args, options),
 };
 
 const http: Http = {

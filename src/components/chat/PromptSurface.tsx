@@ -1,24 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExecutionMode, UserPrompt, UserPromptValue } from "@/types";
 import { MODE_STYLES } from "./modeStyles";
+import { AssumptionPrompt } from "./AssumptionPrompt";
+import { kbdClass, useKeyGuard } from "./promptKeys";
 
 interface PromptSurfaceProps {
   prompt: UserPrompt;
   onRespond: (value: UserPromptValue) => void;
 }
-
-const KEY_GUARD_MS = 300;
-
-function useKeyGuard(): (e: React.KeyboardEvent) => boolean {
-  const mountedAt = useRef(0);
-  useEffect(() => {
-    mountedAt.current = Date.now();
-  }, []);
-  return (e) => e.repeat || Date.now() - mountedAt.current < KEY_GUARD_MS;
-}
-
-const kbdClass =
-  "border-border/60 bg-muted/60 text-current rounded border px-1 py-0.5 font-mono text-2xs font-semibold";
 
 export function PromptSurface({ prompt, onRespond }: PromptSurfaceProps) {
   switch (prompt.kind) {
@@ -30,6 +19,9 @@ export function PromptSurface({ prompt, onRespond }: PromptSurfaceProps) {
     }
     case "text": {
       return <TextPrompt prompt={prompt} onRespond={onRespond} />;
+    }
+    case "assumption": {
+      return <AssumptionPrompt prompt={prompt} onRespond={onRespond} />;
     }
   }
 }

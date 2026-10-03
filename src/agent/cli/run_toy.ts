@@ -1,5 +1,5 @@
 import path from "node:path";
-import { HumanMessage } from "@langchain/core/messages";
+import { userPromptMessage } from "../../core/graph/userPrompt";
 import { createWorkerAgent } from "../worker";
 import { logConversation } from "../../core/telemetry/logger";
 import { createNodeRuntime } from "../../adapters/node/runtime";
@@ -28,7 +28,7 @@ async function main() {
   console.log("Running ungoverned agent tool loop (streaming steps)...\n");
 
   const stream = await agent.compiled.stream(
-    { messages: [new HumanMessage(userPrompt)] },
+    { messages: [userPromptMessage(userPrompt)] },
     { configurable: { thread_id: "toy-thread" }, streamMode: "updates" }
   );
 

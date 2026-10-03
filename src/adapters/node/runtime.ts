@@ -1,9 +1,10 @@
 import * as nodeFs from "node:fs/promises";
 import nodePath from "node:path";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import type { FileStore, Http, Shell, Paths, Runtime } from "@/core/ports";
 import { isNotFound } from "@/core/fsErrors";
+import { executeBySpawn, PARENT_WATCHDOG } from "@/core/superviseProcess";
 
 const APP_IDENTIFIER = "com.sean.allonomic";
 
@@ -35,21 +36,34 @@ const fs: FileStore = {
   copyFile: (source, destination) => nodeFs.copyFile(source, destination),
 };
 
+function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+  }
+}
+
+const spawnProcess: Shell["spawn"] = async (program, args, { cwd, onOutput }) => {
+  const child = spawn(program, args, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  child.stdout.on("data", (chunk) => onOutput("stdout", String(chunk)));
+  child.stderr.on("data", (chunk) => onOutput("stderr", String(chunk)));
+  const exited = new Promise<number | null>((resolve) => {
+    child.on("close", (code) => resolve(code));
+    child.on("error", (error) => {
+      onOutput("stderr", error.message);
+      resolve(1);
+    });
+  });
+  if (child.pid !== undefined)
+    spawn("sh", ["-c", PARENT_WATCHDOG, String(child.pid)], { stdio: "ignore" });
+  return { exited, kill: async (signal) => killGroup(child.pid, signal) };
+};
+
 const shell: Shell = {
-  execute: (program, args) =>
-    new Promise((resolve) => {
-      execFile(program, args, { maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
-        const code = error
-          ? error.signal
-            ? null
-            : typeof error.code === "number"
-              ? error.code
-              : 1
-          : 0;
-        const stderrText = String(stderr) || (error ? error.message : "");
-        resolve({ code, stdout: String(stdout), stderr: stderrText });
-      });
-    }),
+  spawn: spawnProcess,
+  execute: (program, args, options) => executeBySpawn(spawnProcess, program, args, options),
 };
 
 const http: Http = {

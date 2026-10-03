@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { governorActionSchema } from "../governor/types";
+import { presentationSchema } from "../ui/presentation";
 
 const argsSchema = z.record(z.unknown());
+const settingsChangesSchema = z.record(z.unknown());
 
 const toolCallRequestSchema = z.object({
   id: z.string(),
@@ -39,6 +41,7 @@ const userPromptSchema = z.discriminatedUnion("kind", [
     options: z.array(choiceOptionSchema),
   }),
   z.object({ kind: z.literal("text"), label: z.string(), placeholder: optionalString }),
+  z.object({ kind: z.literal("assumption"), label: z.string(), options: stringListSchema }),
 ]);
 
 const governorForkMessageSchema = z.discriminatedUnion("role", [
@@ -59,14 +62,22 @@ const governorForkMessageSchema = z.discriminatedUnion("role", [
 
 export type GovernorForkMessage = z.infer<typeof governorForkMessageSchema>;
 
-const contextFileAgentSchema = z.enum(["worker", "governor", "teacher"]);
-const contextFileHookSchema = z.enum(["session", "userPrompt", "preTool", "postTool", "finish"]);
+const contextFileAgentSchema = z.enum(["worker", "governor", "teacher", "ui"]);
+const contextFileHookSchema = z.enum([
+  "session",
+  "userPrompt",
+  "preTool",
+  "postTool",
+  "finish",
+  "present",
+]);
 
 const contextFileSchema = z.object({
   path: z.string(),
   size: z.number(),
   missing: z.boolean(),
   loadedAt: z.string(),
+  sha256: z.string().optional(),
 });
 
 export type ContextFileAgent = z.infer<typeof contextFileAgentSchema>;
@@ -130,7 +141,7 @@ const turnEventBodySchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("governor_fork"),
     interceptor: z.string(),
-    phase: z.enum(["entry", "pre_tool", "post_tool", "exit"]).optional(),
+    phase: z.enum(["entry", "pre_tool", "post_tool", "exit", "present"]).optional(),
     pass: z.string(),
     messages: z.array(governorForkMessageSchema),
   }),
@@ -141,10 +152,11 @@ const turnEventBodySchema = z.discriminatedUnion("type", [
     hook: z.string().optional(),
   }),
   z.object({
-    type: z.literal("governor_inspect"),
+    type: z.literal("interceptor_passed"),
     interceptor: z.string(),
-    tool: z.string(),
-    args: argsSchema,
+    phase: z.string(),
+    toolCallId: z.string().optional(),
+    durationMs: z.number(),
   }),
   z.object({
     type: z.literal("governor_tool_decision"),
@@ -161,6 +173,12 @@ const turnEventBodySchema = z.discriminatedUnion("type", [
     hook: contextFileHookSchema,
     files: z.array(contextFileSchema),
   }),
+  z.object({
+    type: z.literal("presentation"),
+    interceptor: z.string(),
+    presentation: presentationSchema,
+  }),
+  z.object({ type: z.literal("settings_changed"), changes: settingsChangesSchema }),
   z.object({ type: z.literal("exit_retry"), feedback: z.string() }),
   z.object({ type: z.literal("paused") }),
   z.object({ type: z.literal("resumed") }),
@@ -179,23 +197,52 @@ const turnEventMetaSchema = z.object({
   seq: z.number(),
   at: z.string(),
   turnIndex: z.number(),
+  actor: z.string(),
 });
 
 export const turnEventSchema = turnEventMetaSchema.and(turnEventBodySchema);
-
-export const TURN_EVENTS_FILE = "events.yml";
-
-export const turnEventFileSchema = z.object({
-  version: z.literal(1),
-  events: z.array(turnEventSchema),
-});
 
 export type TurnEventBody = z.infer<typeof turnEventBodySchema>;
 export type TurnEvent = z.infer<typeof turnEventSchema>;
 export type TurnEventOf<T extends TurnEvent["type"]> = Extract<TurnEvent, { type: T }>;
 
+export const WORKER_ACTOR = "worker";
+export const USER_ACTOR = "user";
+
+const OP_EVENT_TYPES = new Set<TurnEvent["type"]>([
+  "turn_started",
+  "prompt_delivered",
+  "model_step",
+  "tool_result",
+  "governor_brief",
+  "exit_retry",
+  "governor_action",
+  "turn_completed",
+  "turn_failed",
+]);
+
+export function isOpEvent(event: TurnEvent): boolean {
+  return OP_EVENT_TYPES.has(event.type);
+}
+
+export interface ScopeOptions {
+  phase?: string;
+  toolCallId?: string;
+}
+
 export interface TurnEventSink {
   emit(event: TurnEventBody): void;
+  scope(name: string, options?: ScopeOptions): ScopedSink;
+}
+
+export interface ScopedSink extends TurnEventSink {
+  close(options?: { collapse?: boolean }): void;
+}
+
+export interface TurnSegment {
+  actor: string;
+  isScope: boolean;
+  events: TurnEvent[];
 }
 
 export type TurnEventListener = (event: TurnEvent) => void;
@@ -204,5 +251,11 @@ export type TurnEventListener = (event: TurnEvent) => void;
 For failures that happen before a turn exists (e.g. runner setup), so they fold like any other event.
 */
 export function createDetachedTurnEvent(body: TurnEventBody): TurnEvent {
-  return { ...body, seq: Date.now(), turnIndex: 0, at: new Date().toISOString() };
+  return {
+    ...body,
+    seq: Date.now(),
+    turnIndex: 0,
+    actor: WORKER_ACTOR,
+    at: new Date().toISOString(),
+  };
 }

@@ -121,7 +121,11 @@ export function SettingsPanel({
       </select>
     );
 
-  const checkboxRow = (key: "network_access" | "teacher", label: string, isChecked: boolean) =>
+  const checkboxRow = (
+    key: "network_access" | "teacher" | "ui" | "collapse_worker_text",
+    label: string,
+    isChecked: boolean
+  ) =>
     row(
       key,
       label,
@@ -160,6 +164,12 @@ export function SettingsPanel({
             asOptions(GOVERNOR_MODES)
           )}
           {checkboxRow("teacher", "Teacher", layer.teacher ?? inherited.teacherEnabled)}
+          {checkboxRow("ui", "UI interceptor", layer.ui ?? inherited.uiEnabled)}
+          {checkboxRow(
+            "collapse_worker_text",
+            "Collapse worker text",
+            layer.collapse_worker_text ?? inherited.collapseWorkerText
+          )}
           {selectRow("model", "Model", model, modelOptions)}
           {selectRow(
             "thinking_level",

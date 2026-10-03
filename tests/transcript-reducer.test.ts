@@ -1,3 +1,4 @@
+import { assumption } from "./helpers/governorFixtures";
 import { describe, it, expect } from "bun:test";
 import { createTurnEventLog } from "../src/core/turn/eventLog";
 import { foldTurnEvents } from "../src/core/turn/transcript";
@@ -146,46 +147,27 @@ describe("transcript reducer", () => {
     expect(t.consoleEvents.map((e) => e.badge)).toEqual(["ERROR", "STOP"]);
   });
 
-  it("replays falseCompletion actions into governorState.false_completions", () => {
+  it("replays assumption actions into governorState.assumptions", () => {
     const { sink, events } = createTurnEventLog(1, []);
     sink.emit({ type: "turn_started", threadId: "t", prompt: "add a box" });
     const emit = (action: GovernorAction) =>
-      sink.emit({ type: "governor_action", phase: "entry", interceptor: "Governor", action });
+      sink.emit({ type: "governor_action", phase: "exit", interceptor: "Governor", action });
     emit({
       type: "push_intent",
       intent: { id: "i1", kind: "request", description: "add a box" },
     });
-    emit({
-      type: "add_false_completion",
-      falseCompletion: {
-        id: "r1",
-        intent_id: "i1",
-        summary: "s",
-        completes_as: "c",
-        false_because: "f",
-        check: "k",
-        evidence: null,
-        resolution: null,
-        resolution_reason: null,
-        still_assumed: null,
-      },
-    });
-    emit({
-      type: "resolve_false_completion",
-      id: "r1",
-      resolution: "superseded",
-      reason: "changed",
-    });
+    emit({ type: "record_assumption", assumption: assumption("r1", "i1") });
+    emit({ type: "resolve_assumption", id: "r1", evidence: "user confirmed" });
 
     const t = foldTurnEvents(events);
-    expect(t.governorState.false_completions).toHaveLength(1);
-    expect(t.governorState.false_completions[0]).toMatchObject({
+    expect(t.governorState.assumptions).toHaveLength(1);
+    expect(t.governorState.assumptions[0]).toMatchObject({
       id: "r1",
-      resolution: "superseded",
-      resolution_reason: "changed",
+      status: "resolved",
+      evidence: "user confirmed",
     });
     expect(t.consoleEvents.map((e) => e.summary)).toContain(
-      "resolve_false_completion: 'r1' superseded — changed"
+      "resolve_assumption: 'r1' — user confirmed"
     );
   });
 });

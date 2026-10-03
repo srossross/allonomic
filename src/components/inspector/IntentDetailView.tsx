@@ -1,16 +1,16 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
-import type { UserIntent, FalseCompletion } from "@/core/governor/types";
+import type { UserIntent, Assumption } from "@/core/governor/types";
 import { StatusIcon } from "./IntentRow";
-import { FalseCompletionIcon } from "./FalseCompletionRow";
+import { AssumptionIcon } from "./AssumptionRow";
 
 interface IntentDetailViewProperties {
   intent: UserIntent;
   isDone: boolean;
-  falseCompletions: FalseCompletion[];
+  assumptions: Assumption[];
   reframed: string | undefined;
   reframeError?: string;
-  focusFalseCompletionId: string | null;
+  focusAssumptionId: string | null;
   onBack: () => void;
 }
 
@@ -33,11 +33,11 @@ function Chip({ children }: { children: ReactNode }) {
   );
 }
 
-function FalseCompletionDetail({
-  falseCompletion,
+function AssumptionDetail({
+  assumption,
   isFocused,
 }: {
-  falseCompletion: FalseCompletion;
+  assumption: Assumption;
   isFocused: boolean;
 }) {
   const reference = useRef<HTMLDivElement>(null);
@@ -49,44 +49,36 @@ function FalseCompletionDetail({
     <div
       ref={reference}
       className={`border-border/60 space-y-2 rounded-xs border-l-2 p-2 ${
-        falseCompletion.resolution === null ? "" : "opacity-60"
+        assumption.status === "open" ? "" : "opacity-60"
       }`}
     >
       <div className="flex items-start gap-2">
         <div className="shrink-0 pt-0.5">
-          <FalseCompletionIcon resolution={falseCompletion.resolution} />
+          <AssumptionIcon status={assumption.status} />
         </div>
-        <span className="text-foreground text-xs leading-snug font-medium">
-          {falseCompletion.summary}
-        </span>
+        <span className="text-foreground text-xs leading-snug font-medium">{assumption.text}</span>
       </div>
       <div className="text-muted-foreground text-2xs flex flex-wrap items-center gap-1.5">
-        <span className="font-mono">{falseCompletion.id}</span>
-        <Chip>{falseCompletion.resolution ?? "open"}</Chip>
+        <span className="font-mono">{assumption.id}</span>
+        <Chip>{assumption.status}</Chip>
+        <Chip>{assumption.resolver}</Chip>
+        <Chip>{assumption.impact_category}</Chip>
+        <Chip>candidates: {assumption.candidates}</Chip>
+        <Chip>cost: {assumption.impact_cost}</Chip>
+        {assumption.user_would_care !== null && (
+          <Chip>{assumption.user_would_care ? "user would care" : "user would not care"}</Chip>
+        )}
       </div>
-      <Field label="Completes As">{falseCompletion.completes_as}</Field>
-      <Field label="False Because">{falseCompletion.false_because}</Field>
-      <Field label="Check">{falseCompletion.check}</Field>
+      {assumption.request && <Field label="Request">{assumption.request}</Field>}
       <Field label="Evidence">
-        {falseCompletion.evidence ? (
-          <>
-            <div className="text-muted-foreground text-2xs font-mono">
-              {falseCompletion.evidence.source}
-            </div>
-            <blockquote className="border-border mt-0.5 border-l-2 pl-2 font-mono whitespace-pre-wrap">
-              {falseCompletion.evidence.quote}
-            </blockquote>
-          </>
+        {assumption.evidence ? (
+          <blockquote className="border-border border-l-2 pl-2 font-mono whitespace-pre-wrap">
+            {assumption.evidence}
+          </blockquote>
         ) : (
           <span className="text-muted-foreground">No evidence</span>
         )}
       </Field>
-      {falseCompletion.resolution_reason && (
-        <Field label="Resolution Reason">{falseCompletion.resolution_reason}</Field>
-      )}
-      {falseCompletion.still_assumed && (
-        <Field label="Still Assumed">{falseCompletion.still_assumed}</Field>
-      )}
     </div>
   );
 }
@@ -94,10 +86,10 @@ function FalseCompletionDetail({
 export function IntentDetailView({
   intent,
   isDone,
-  falseCompletions,
+  assumptions,
   reframed,
   reframeError,
-  focusFalseCompletionId,
+  focusAssumptionId,
   onBack,
 }: IntentDetailViewProperties) {
   return (
@@ -139,16 +131,16 @@ export function IntentDetailView({
 
       <div className="space-y-2 px-1">
         <div className="text-muted-foreground text-2xs font-semibold tracking-wider uppercase">
-          False completions ({falseCompletions.length})
+          Assumptions ({assumptions.length})
         </div>
-        {falseCompletions.length === 0 ? (
+        {assumptions.length === 0 ? (
           <div className="text-muted-foreground text-xs">None</div>
         ) : (
-          falseCompletions.map((falseCompletion) => (
-            <FalseCompletionDetail
-              key={falseCompletion.id}
-              falseCompletion={falseCompletion}
-              isFocused={falseCompletion.id === focusFalseCompletionId}
+          assumptions.map((assumption) => (
+            <AssumptionDetail
+              key={assumption.id}
+              assumption={assumption}
+              isFocused={assumption.id === focusAssumptionId}
             />
           ))
         )}

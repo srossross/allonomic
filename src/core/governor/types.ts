@@ -11,69 +11,48 @@ export const intentKindSchema = z.enum([
 
 export type IntentKind = z.infer<typeof intentKindSchema>;
 
+export const specificitySchema = z.enum(["low", "med", "high"]);
+
 const userIntentSchema = z.object({
   id: z.string(),
   kind: intentKindSchema,
   description: z.string(),
   completed_when: z.string().nullable().default(null),
+  overstep: z.string().nullable().default(null),
+  specificity: specificitySchema.nullable().default(null),
   changelog: z.array(z.string()).default([]),
 });
 
 export type UserIntent = z.infer<typeof userIntentSchema>;
 
-export const falseCompletionResolutionSchema = z.enum([
-  "ruled_out",
-  "clarified",
-  "invalid",
-  "superseded",
-]);
-
-export type FalseCompletionResolution = z.infer<typeof falseCompletionResolutionSchema>;
-
-export const EVIDENCE_RESOLUTIONS: ReadonlySet<FalseCompletionResolution> = new Set([
-  "ruled_out",
-  "clarified",
-]);
-
-export const evidenceSchema = z.object({
-  source: z.string(),
-  quote: z.string(),
-});
-
-export type Evidence = z.infer<typeof evidenceSchema>;
-
-const falseCompletionFields = z.object({
+export const assumptionSchema = z.object({
   id: z.string(),
   intent_id: z.string(),
-  summary: z.string(),
-  completes_as: z.string(),
-  false_because: z.string(),
-  check: z.string(),
-  evidence: evidenceSchema.nullable().default(null),
-  resolution: falseCompletionResolutionSchema.nullable(),
-  resolution_reason: z.string().nullable(),
-  still_assumed: z.string().nullable().default(null),
+  text: z.string(),
+  status: z.enum(["open", "resolved"]),
+  evidence: z.string().nullable().default(null),
+  resolver: z.enum(["user", "tool"]),
+  impact_category: z.enum([
+    "response_text",
+    "wrong_answer",
+    "incomplete_answer",
+    "wrong_change",
+    "wasted_work",
+  ]),
+  user_would_care: z.boolean().nullable().default(null),
+  request: z.string().nullable().default(null),
+  depends_on: z.string().nullable().default(null),
+  candidates: z.enum(["one", "countable", "open"]),
+  impact_cost: z.enum(["low", "high"]),
 });
 
-// Legacy shapes: {summary, completes_as, false_because, detect_by, directive} and {reason, needs}.
-const falseCompletionSchema = z.preprocess((raw) => {
-  if (typeof raw !== "object" || raw === null || "check" in raw) return raw;
-  const legacy: Record<string, unknown> = { ...raw };
-  return {
-    ...legacy,
-    summary: legacy.summary ?? legacy.reason,
-    completes_as: legacy.completes_as ?? "",
-    false_because: legacy.false_because ?? legacy.reason,
-    check: legacy.directive ?? legacy.detect_by ?? legacy.needs ?? "",
-  };
-}, falseCompletionFields);
-
-export type FalseCompletion = z.infer<typeof falseCompletionSchema>;
+export type Assumption = z.infer<typeof assumptionSchema>;
 
 export interface GovernorState {
   intent_stack: UserIntent[];
   completed_intents: UserIntent[];
-  false_completions: FalseCompletion[];
+  assumptions: Assumption[];
+  resolved_since_prompt: UserIntent[];
 }
 
 export const governorActionSchema = z.discriminatedUnion("type", [
@@ -84,20 +63,16 @@ export const governorActionSchema = z.discriminatedUnion("type", [
     description: z.string().optional(),
     kind: intentKindSchema.optional(),
     completed_when: z.string().optional(),
+    overstep: z.string().optional(),
+    specificity: specificitySchema.optional(),
     what_changed: z.string().optional(),
   }),
-  z.object({ type: z.literal("add_false_completion"), falseCompletion: falseCompletionSchema }),
-  z.object({ type: z.literal("no_false_completions"), intent_id: z.string(), reason: z.string() }),
-  z.object({
-    type: z.literal("resolve_false_completion"),
-    id: z.string(),
-    resolution: falseCompletionResolutionSchema,
-    evidence: evidenceSchema.optional(),
-    reason: z.string().optional(),
-    still_assumed: z.string().optional(),
-  }),
+  z.object({ type: z.literal("record_assumption"), assumption: assumptionSchema }),
+  z.object({ type: z.literal("clear_assumptions") }),
+  z.object({ type: z.literal("resolve_assumption"), id: z.string(), evidence: z.string() }),
   z.object({ type: z.literal("pop_intent"), id: z.string().optional() }),
   z.object({ type: z.literal("resolve_intent"), id: z.string() }),
+  z.object({ type: z.literal("begin_prompt") }),
 ]);
 
 export type GovernorAction = z.infer<typeof governorActionSchema>;

@@ -1,4 +1,5 @@
 import { ToolMessage, type BaseMessage } from "@langchain/core/messages";
+import type { ScopeOptions } from "../turn/events";
 import {
   INTERCEPTOR_HOOKS,
   type AgentInterceptor,
@@ -23,6 +24,23 @@ export function toolContent(message: ToolMessage): string {
   return typeof message.content === "string" ? message.content : JSON.stringify(message.content);
 }
 
+export async function inScope<T>(
+  context: PipelineContext,
+  interceptor: AgentInterceptor,
+  options: ScopeOptions,
+  run: (scoped: PipelineContext) => Promise<T>,
+  isPassThrough: (result: T) => boolean
+): Promise<T> {
+  const events = context.events.scope(interceptor.name, options);
+  try {
+    const result = await run({ ...context, events });
+    events.close({ collapse: isPassThrough(result) });
+    return result;
+  } finally {
+    events.close();
+  }
+}
+
 export async function preToolDenial(
   interceptors: AgentInterceptor[],
   call: ToolCall,
@@ -31,8 +49,15 @@ export async function preToolDenial(
   decidedBy: ReadonlySet<string> = new Set()
 ): Promise<ToolMessage | null> {
   for (const interceptor of interceptors) {
-    if (!interceptor.onPreToolCall || decidedBy.has(interceptor.name)) continue;
-    const approval = await interceptor.onPreToolCall(call, conversation, context);
+    const { onPreToolCall } = interceptor;
+    if (!onPreToolCall || decidedBy.has(interceptor.name)) continue;
+    const approval = await inScope(
+      context,
+      interceptor,
+      { phase: "pre_tool", toolCallId: call.id },
+      (scoped) => onPreToolCall.call(interceptor, call, conversation, scoped),
+      (result) => result.approved
+    );
     if (!approval.approved) {
       return new ToolMessage({
         status: "error",
@@ -54,8 +79,16 @@ export async function withPostToolLessons(
 ): Promise<ToolMessage> {
   let current = result;
   for (const interceptor of interceptors) {
-    if (!interceptor.onPostToolCall) continue;
-    const lesson = await interceptor.onPostToolCall(call, current, conversation, context);
+    const { onPostToolCall } = interceptor;
+    if (!onPostToolCall) continue;
+    const input = current;
+    const lesson = await inScope(
+      context,
+      interceptor,
+      { phase: "post_tool", toolCallId: call.id },
+      (scoped) => onPostToolCall.call(interceptor, call, input, conversation, scoped),
+      (taught) => !taught
+    );
     if (!lesson) continue;
     current = new ToolMessage({
       status: current.status,

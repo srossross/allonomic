@@ -195,7 +195,7 @@ export class ToolTeacherInterceptor implements AgentInterceptor {
         interceptor: this.name,
         phase,
         pass,
-        messages: toForkMessages(scratchpad.slice(conversation.length)),
+        messages: toForkMessages(scratchpad.slice(conversation.length + 1)),
       });
     }
   }

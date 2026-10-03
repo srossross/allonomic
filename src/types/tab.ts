@@ -37,6 +37,7 @@ export interface TabData {
   hasNetworkAccess?: boolean;
   governorMode?: GovernorMode;
   teacherEnabled?: boolean;
+  collapseWorkerText?: boolean;
   interceptorSettings?: Record<string, InterceptorSettings>;
   loadErrors?: SessionLoadError[];
   contextTokens?: number;

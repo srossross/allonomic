@@ -21,6 +21,11 @@ export interface ExitVerdict {
   feedback?: string;
 }
 
+export interface EntryBrief {
+  text: string;
+  doneWhen: string[];
+}
+
 export interface PipelineContext {
   workspaceDir: string;
   threadId: string;
@@ -29,6 +34,7 @@ export interface PipelineContext {
   events: TurnEventSink;
   askUser: AskUser;
   control?: TurnControl;
+  recordSettings?: () => Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -65,6 +71,7 @@ export const INTERCEPTOR_HOOKS = [
   "onPreToolCall",
   "onPostToolCall",
   "onAgentFinish",
+  "onPresent",
 ] as const;
 
 export type InterceptorHook = (typeof INTERCEPTOR_HOOKS)[number];
@@ -87,7 +94,10 @@ export interface AgentInterceptor {
   /**
    * Called when a user submits a prompt, before the worker agent runs.
    */
-  onUserPrompt?(conversation: BaseMessage[], context: PipelineContext): Promise<string | undefined>;
+  onUserPrompt?(
+    conversation: BaseMessage[],
+    context: PipelineContext
+  ): Promise<EntryBrief | undefined>;
 
   /**
    * Called before any tool is executed. Can block or approve the call.
@@ -110,4 +120,9 @@ export interface AgentInterceptor {
    * If allowFinish is false, the loop will restart with the feedback injected.
    */
   onAgentFinish?(conversation: BaseMessage[], context: PipelineContext): Promise<ExitVerdict>;
+
+  /**
+   * Runs after every onAgentFinish allowed the finish. Output goes to the UI only, never back to the worker.
+   */
+  onPresent?(conversation: BaseMessage[], context: PipelineContext): Promise<void>;
 }

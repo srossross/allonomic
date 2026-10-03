@@ -1,0 +1,2 @@
+{"type":"prompt_requested","promptId":"prompt_GUm5n5zlJUishFkUUF6e6","toolCallId":"d615449a-8504-43e2-8a01-b3546a487a5a","prompt":{"kind":"confirm","label":"gh pr status","mode":"read","currentMode":"restricted"},"seq":36,"at":"2026-10-01T16:02:54.540Z","turnIndex":1,"actor":"user"}
+{"type":"prompt_answered","promptId":"prompt_GUm5n5zlJUishFkUUF6e6","value":true,"seq":37,"at":"2026-10-01T16:02:58.207Z","turnIndex":1,"actor":"user"}

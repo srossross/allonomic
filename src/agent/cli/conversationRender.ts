@@ -1,5 +1,6 @@
 import type { GovernorForkMessage, TurnEvent } from "../../core/turn/events";
-import type { GovernorState, FalseCompletion } from "../../core/governor/types";
+import type { GovernorState, Assumption } from "../../core/governor/types";
+import type { Presentation } from "../../core/ui/presentation";
 
 const colorState = { isEnabled: Boolean(process.stdout.isTTY) && !process.env.NO_COLOR };
 
@@ -16,6 +17,7 @@ export const magenta = paint("35");
 export const cyan = paint("36");
 export const yellow = paint("33");
 export const red = paint("31");
+export const green = paint("32");
 
 const width = Math.min(process.stdout.columns ?? 100, 120);
 
@@ -71,6 +73,34 @@ function renderForkMessage(message: GovernorForkMessage): string[] {
   return out;
 }
 
+function renderPresentation(presentation: Presentation): string[] {
+  const indent = " ".repeat(4);
+  return [
+    wrap(presentation.response, "  "),
+    ...presentation.responseDetails.map(
+      ({ answer, body }) => `  ▸ ${answer}\n${dim(wrap(body, indent))}`
+    ),
+    ...presentation.callouts.map(
+      ({ title, details }) => yellow(`  ⚠ ${title}`) + (details ? `\n${wrap(details, indent)}` : "")
+    ),
+    ...presentation.evidence.map(({ claim, support, gap }) =>
+      [
+        support.length > 0 ? `  ✓ ${claim}` : yellow(`  ? ${claim} (assumed)`),
+        ...support.map(
+          ({ source, quote, method, why }) =>
+            `${indent}${JSON.stringify(quote)} ${dim(`${method} · ${source}`)}` +
+            (why ? `\n${dim(wrap(why, indent))}` : "")
+        ),
+        ...(gap ? [dim(`${indent}not covered: ${gap}`)] : []),
+      ].join("\n")
+    ),
+    ...(presentation.journey ? [dim(`  journey\n${wrap(presentation.journey, indent)}`)] : []),
+    ...presentation.questions.map(
+      ({ prompt, options }) => bold(`  ? ${prompt}`) + (options ? `  [${options.join("] [")}]` : "")
+    ),
+  ];
+}
+
 export function renderEvent(event: TurnEvent): string | null {
   switch (event.type) {
     case "turn_started": {
@@ -105,40 +135,52 @@ export function renderEvent(event: TurnEvent): string | null {
     case "turn_failed": {
       return event.aborted ? null : red(`✗ ${event.error}`);
     }
+    case "presentation": {
+      return [cyan(`\n━━ ${event.interceptor} ━━`), ...renderPresentation(event.presentation)].join(
+        "\n"
+      );
+    }
     default: {
       return dim(`  ${event.type}`);
     }
   }
 }
 
-function renderFalseCompletion(falseCompletion: FalseCompletion): string {
-  const status = falseCompletion.resolution ?? "open";
-  const badge = status === "open" ? yellow(`[${status}]`) : dim(`[${status}]`);
-  const evidence = falseCompletion.evidence
-    ? `${dim(falseCompletion.evidence.source)} ${JSON.stringify(falseCompletion.evidence.quote)}`
-    : dim("none");
+function renderAssumption(assumption: Assumption): string {
+  const badge =
+    assumption.status === "open" ? yellow(`[${assumption.status}]`) : dim(`[${assumption.status}]`);
+  const labels = [
+    assumption.id,
+    assumption.depends_on && `depends_on:${assumption.depends_on}`,
+    assumption.resolver,
+    assumption.impact_category,
+    `candidates:${assumption.candidates}`,
+    `cost:${assumption.impact_cost}`,
+    assumption.user_would_care !== null &&
+      (assumption.user_would_care ? "user-would-care" : "user-would-not-care"),
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return [
-    `  ${badge} ${bold(falseCompletion.summary)}`,
-    `      ${dim("completes as:")}  ${falseCompletion.completes_as}`,
-    `      ${dim("false because:")} ${falseCompletion.false_because}`,
-    `      ${dim("check:")}         ${falseCompletion.check}`,
-    `      ${dim("evidence:")}      ${evidence}`,
-  ].join("\n");
+    `  ${badge} ${bold(assumption.text)}`,
+    `      ${dim(labels)}`,
+    assumption.request && `      ${dim("request:")} ${assumption.request}`,
+    assumption.evidence && `      ${dim("evidence:")} ${JSON.stringify(assumption.evidence)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-export function renderFalseCompletions(state: GovernorState): string {
-  const active = state.intent_stack.map((intent) => ({ intent, isDone: false }));
-  const done = state.completed_intents
-    .filter((intent) => state.false_completions.some((r) => r.intent_id === intent.id))
-    .map((intent) => ({ intent, isDone: true }));
-  return [...active, ...done]
-    .map(({ intent, isDone }) => {
-      const falseCompletions = state.false_completions.filter((r) => r.intent_id === intent.id);
-      const tag = isDone ? dim(`[${intent.kind} · done]`) : cyan(`[${intent.kind}]`);
-      const head = `\n${tag} ${bold(intent.description)}`;
-      return falseCompletions.length === 0
-        ? `${head}\n  ${dim("(no false completions)")}`
-        : `${head}\n${falseCompletions.map((r) => renderFalseCompletion(r)).join("\n")}`;
+export function renderAssumptions(state: GovernorState): string {
+  const intents = [...state.intent_stack, ...state.completed_intents].filter((intent) =>
+    state.assumptions.some((a) => a.intent_id === intent.id)
+  );
+  if (intents.length === 0) return dim("  (no assumptions)");
+  return intents
+    .map((intent) => {
+      const assumptions = state.assumptions.filter((a) => a.intent_id === intent.id);
+      const head = `\n${cyan(`[${intent.kind}]`)} ${bold(intent.description)}`;
+      return `${head}\n${assumptions.map((a) => renderAssumption(a)).join("\n")}`;
     })
     .join("\n");
 }

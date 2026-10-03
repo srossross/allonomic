@@ -1,7 +1,10 @@
-import { ChevronRight, RotateCcw, Target } from "lucide-react";
+import type { ReactNode } from "react";
+import { Brain, MessageSquare, RotateCcw, Target } from "lucide-react";
 import type { Message } from "@/types";
 import type { ToolItem } from "./exploreGroups";
-import { ExploreGroup, ToolCallRow } from "./ToolCallRows";
+import { StreamRow } from "./StreamRow";
+import { isCollapsedWorkerText } from "./streamRows";
+import { ExploreGroup, ToolCallRow, type ToolControls } from "./ToolCallRows";
 
 interface ChatMessageItemProperties {
   message: Message;
@@ -10,7 +13,13 @@ interface ChatMessageItemProperties {
   onToggleThought: () => void;
   expandedToolIds: Set<string>;
   onToggleTool: (toolId: string) => void;
+  toolControls?: ToolControls;
   onRetry?: () => void;
+  isTextCollapsed?: boolean;
+  isTextExpanded?: boolean;
+  onToggleText?: () => void;
+  presentation?: ReactNode;
+  rowOffset?: number;
 }
 
 export function ChatMessageItem({
@@ -20,30 +29,35 @@ export function ChatMessageItem({
   onToggleThought,
   expandedToolIds,
   onToggleTool,
+  toolControls,
   onRetry,
+  isTextCollapsed = false,
+  isTextExpanded = false,
+  onToggleText,
+  presentation,
+  rowOffset = 0,
 }: ChatMessageItemProperties) {
+  const isWorkerText = isCollapsedWorkerText(message, isTextCollapsed);
+  let row = rowOffset;
+  const isNextStriped = () => row++ % 2 === 1;
   return (
-    <div className="flex w-full flex-col items-start">
-      {message.role === "assistant" && (
-        <div className="mb-2 w-full space-y-1 select-text">
+    <div
+      className={`flex w-full flex-col items-start gap-1 ${message.role === "user" ? "pt-3 first:pt-0" : ""}`}
+    >
+      {message.role === "assistant" && (message.thinking || toolItems.length > 0) && (
+        <div className="w-full space-y-1 select-text">
           {message.thinking && (
             <div>
-              <button
-                type="button"
-                onClick={onToggleThought}
-                className="group text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1.5 py-0.5 text-xs font-normal transition-colors select-none"
+              <StreamRow
+                icon={<Brain className="size-3.5" />}
+                striped={isNextStriped()}
+                isExpanded={isThoughtExpanded}
+                onToggle={onToggleThought}
               >
-                <span className="text-muted-foreground group-hover:text-foreground font-normal">
-                  {message.thinkingDurationSeconds === undefined
-                    ? "Thought"
-                    : `Thought for ${message.thinkingDurationSeconds}s`}
-                </span>
-                <ChevronRight
-                  className={`text-muted-foreground size-3 transition-transform duration-150 ${
-                    isThoughtExpanded ? "rotate-90" : ""
-                  }`}
-                />
-              </button>
+                {message.thinkingDurationSeconds === undefined
+                  ? "Thought"
+                  : `Thought for ${message.thinkingDurationSeconds}s`}
+              </StreamRow>
               {isThoughtExpanded && (
                 <div className="border-border/80 bg-muted/20 text-muted-foreground/90 mt-1 mb-2 max-h-60 overflow-y-auto rounded-xs border-l-2 p-2 pl-3 font-mono text-xs leading-relaxed whitespace-pre-wrap select-text">
                   {message.thinking}
@@ -61,8 +75,10 @@ export function ChatMessageItem({
                       key={item.id}
                       id={item.id}
                       entries={item.entries}
+                      striped={isNextStriped()}
                       expandedToolIds={expandedToolIds}
                       onToggleTool={onToggleTool}
+                      toolControls={toolControls}
                     />
                   );
                 }
@@ -71,8 +87,10 @@ export function ChatMessageItem({
                   <ToolCallRow
                     key={entry.toolId}
                     entry={entry}
+                    striped={isNextStriped()}
                     isExpanded={expandedToolIds.has(entry.toolId)}
                     onToggleTool={onToggleTool}
+                    toolControls={toolControls}
                   />
                 );
               })}
@@ -83,21 +101,15 @@ export function ChatMessageItem({
 
       {message.brief && (
         <div className="w-full">
-          <button
-            type="button"
-            onClick={onToggleThought}
-            className="group text-muted-foreground hover:text-foreground flex cursor-pointer items-start gap-1.5 py-0.5 text-left text-xs font-normal transition-colors select-none"
+          <StreamRow
+            icon={<Target className="size-3.5" />}
+            iconTitle={message.brief.interceptor}
+            striped={isNextStriped()}
+            isExpanded={isThoughtExpanded}
+            onToggle={onToggleThought}
           >
-            <Target className="mt-0.5 size-3 shrink-0" />
-            <span>
-              {message.brief.doneWhen.length > 0 ? message.brief.doneWhen.join("; ") : "Brief"}
-            </span>
-            <ChevronRight
-              className={`text-muted-foreground mt-0.5 size-3 shrink-0 transition-transform duration-150 ${
-                isThoughtExpanded ? "rotate-90" : ""
-              }`}
-            />
-          </button>
+            {message.brief.doneWhen.length > 0 ? message.brief.doneWhen.join("; ") : "Brief"}
+          </StreamRow>
           {isThoughtExpanded && (
             <div className="border-border/80 bg-muted/20 text-muted-foreground/90 mt-1 mb-2 rounded-xs border-l-2 p-2 pl-3 text-xs leading-relaxed whitespace-pre-wrap select-text">
               {message.brief.text}
@@ -106,7 +118,22 @@ export function ChatMessageItem({
         </div>
       )}
 
-      {Boolean(message.content) && !message.brief && (
+      {presentation && <div className="w-full pt-2">{presentation}</div>}
+
+      {Boolean(message.content) && isWorkerText && (
+        <StreamRow
+          icon={<MessageSquare className="size-3.5" />}
+          striped={isNextStriped()}
+          isExpanded={isTextExpanded}
+          onToggle={() => onToggleText?.()}
+        >
+          <span className="block truncate">
+            {message.content.split("\n").find((line) => line.trim()) ?? ""}
+          </span>
+        </StreamRow>
+      )}
+
+      {Boolean(message.content) && !message.brief && (!isWorkerText || isTextExpanded) && (
         <div
           className={`w-full rounded-xs px-2.5 py-1.5 text-left text-xs leading-relaxed whitespace-pre-wrap ${
             message.role === "user"

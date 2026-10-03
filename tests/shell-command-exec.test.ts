@@ -1,9 +1,13 @@
 import { describe, it, expect } from "bun:test";
+import { AIMessage } from "@langchain/core/messages";
+import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { createMemoryRuntime, ScriptedShell } from "../src/adapters/memory/runtime";
 import type { ShellResult } from "../src/core/ports";
 import { createAgentTools } from "../src/core/tools";
-import { seatbeltProfile } from "../src/core/tools/shell";
-import { parseShellResult } from "../src/core/tools/shellResult";
+import { createShellLauncher, seatbeltProfile } from "../src/core/tools/shell";
+import { BackgroundJobs } from "../src/core/jobs/backgroundJobs";
+import { formatShellResult, parseShellResult } from "../src/core/tools/shellResult";
+import { ToolStops } from "../src/core/tools/toolStops";
 
 function shellTools(
   options: {
@@ -18,12 +22,29 @@ function shellTools(
   const tools = createAgentTools(runtime, "/w", "god");
   const byName = (name: string) => tools.find((t) => t.name === name)!;
   return {
+    runtime,
     shell: runtime.shell,
     level1: byName("shell_1_project_read_only"),
     level2: byName("shell_2_read_only"),
     level3: byName("shell_3_project_write"),
     level4: byName("shell_4_full_access"),
   };
+}
+
+function manualShellTools() {
+  const runtime = createMemoryRuntime();
+  const shell = new ScriptedShell(undefined, false);
+  runtime.shell = shell;
+  const stops = new ToolStops();
+  const jobs = new BackgroundJobs(shell, runtime.fs, createShellLauncher(runtime, "/w"));
+  const level4 = createAgentTools(runtime, "/w", "god", { stops, jobs }).find(
+    (t) => t.name === "shell_4_full_access"
+  )!;
+  return { runtime, shell, stops, jobs, level4 };
+}
+
+function toolCall(id: string, command: string) {
+  return { id, name: "shell_4_full_access", args: { command }, type: "tool_call" as const };
 }
 
 function params(args: string[], prefix: string) {
@@ -43,7 +64,57 @@ describe("sandboxed shell execution", () => {
     expect(args[1]).not.toContain("/w");
     const [tmp] = params(args, "WRITE");
     expect(tmp).toMatch(/^\/private\/tmp\/at-sandbox\/[0-9a-f]{8}$/);
-    expect(args.slice(-3)).toEqual(["/w", tmp, "ls -la"]);
+    expect(args.slice(-2)).toEqual([tmp, "ls -la"]);
+    expect(shell.calls[0].options).toEqual({ cwd: "/w" });
+  });
+
+  it("kills the command after shell_timeout_seconds", async () => {
+    const { runtime, shell, level4 } = manualShellTools();
+    runtime.fs.files.set("/appconfig/config.yml", "shell_timeout_seconds: 0.05\n");
+    const pending = level4.invoke({ command: "make" });
+    await Bun.sleep(10);
+    shell.spawned[0].process.emit("stdout", "building");
+    const parsed = parseShellResult(String(await pending));
+    expect(parsed).toMatchObject({ output: "building", exitCode: "timeout" });
+    expect(shell.spawned[0].process.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("stops a running command by tool call id and keeps partial output", async () => {
+    const { shell, level4, stops } = manualShellTools();
+    const pending = level4.invoke(toolCall("call-1", "sleep 100"));
+    await Bun.sleep(10);
+    shell.spawned[0].process.emit("stdout", "partial");
+    expect(stops.stop("call-1")).toBe(true);
+    const message = await pending;
+    const parsed = parseShellResult(String(message.content));
+    expect(parsed).toMatchObject({ output: "partial", exitCode: "stopped" });
+    expect(stops.stop("call-1")).toBe(false);
+  });
+
+  it("moves a running command to a background job that keeps logging to a file", async () => {
+    const { runtime, shell, level4, stops, jobs } = manualShellTools();
+    const pending = level4.invoke(toolCall("call-1", "serve"));
+    await Bun.sleep(10);
+    const { process } = shell.spawned[0];
+    process.emit("stdout", "listening");
+    expect(stops.background("call-1")).toBe(true);
+    const message = await pending;
+    const content = String(message.content);
+    expect(parseShellResult(content)).toMatchObject({
+      output: "listening",
+      exitCode: "background",
+    });
+    const logPath = /; output in (\S+)\]$/.exec(content)?.[1];
+    expect(content).toContain("[moved to background as job-1 in");
+    expect(logPath).toMatch(/\/jobs\/default\/job-1\.log$/);
+    process.emit("stdout", " GET /");
+    await jobs.flushLog("job-1");
+    expect(jobs.read("job-1")).toMatchObject({
+      output: "listening GET /",
+      info: { command: "serve", status: "running", logPath },
+    });
+    expect(await runtime.fs.readText(logPath!)).toBe("listening GET /");
+    expect(process.signals).toEqual([]);
   });
 
   it("level 1 reads only the project, $TMP and system dirs, and writes only $TMP", async () => {
@@ -99,9 +170,41 @@ describe("sandboxed shell execution", () => {
   it("level 4 runs an unsandboxed sh in the workdir", async () => {
     const { shell, level4 } = shellTools();
     await level4.invoke({ command: "make" });
-    expect(shell.calls[0]).toEqual({
+    expect(shell.calls[0]).toMatchObject({
       program: "sh",
-      args: ["-c", 'cd "$0" && exec /bin/sh -c "$1"', "/w", "make"],
+      args: ["-c", "make"],
+      options: { cwd: "/w" },
+    });
+  });
+
+  it("kills the running command when the turn signal aborts", async () => {
+    const runtime = createMemoryRuntime();
+    const shell = new ScriptedShell(undefined, false);
+    runtime.shell = shell;
+    const tools = createAgentTools(runtime, "/w", "god");
+    const controller = new AbortController();
+    const node = new ToolNode(tools);
+    const message = new AIMessage({
+      content: "",
+      tool_calls: [{ id: "call-1", name: "shell_4_full_access", args: { command: "x" } }],
+    });
+    const settled = Promise.allSettled([
+      node.invoke({ messages: [message] }, { signal: controller.signal }),
+    ]);
+    await Bun.sleep(10);
+    controller.abort();
+    await settled;
+    expect(shell.spawned[0].process.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("formats stopped and timed out footers", () => {
+    expect(parseShellResult(formatShellResult("out", "", null, 5, "stopped"))).toEqual({
+      output: "out",
+      exitCode: "stopped",
+      durationMs: 5,
+    });
+    expect(parseShellResult(formatShellResult("", "", null, 7, "timeout"))).toMatchObject({
+      exitCode: "timeout",
     });
   });
 

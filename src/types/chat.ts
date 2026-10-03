@@ -1,4 +1,5 @@
 import type { ToolCallInfo } from "./tools";
+import type { Presentation } from "@/core/ui/presentation";
 
 export interface Message {
   id: string;
@@ -10,6 +11,7 @@ export interface Message {
   isError?: boolean;
   isQueued?: boolean;
   brief?: { interceptor: string; text: string; doneWhen: string[] };
+  presentation?: Presentation;
 }
 
 export interface ContextMessage {
@@ -53,7 +55,7 @@ export const LEVEL_MODES: Record<AccessLevel, ExecutionMode> = {
 
 export const DEFAULT_EXECUTION_MODE: ExecutionMode = "restricted";
 
-export const GOVERNOR_MODES = ["off", "no-false-completion", "full"] as const;
+export const GOVERNOR_MODES = ["off", "intent-only", "full"] as const;
 
 export type GovernorMode = (typeof GOVERNOR_MODES)[number];
 

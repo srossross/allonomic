@@ -62,7 +62,7 @@ describe("log routing", () => {
 });
 
 describe("SessionWriter.appendLog", () => {
-  it("appends JSONL records to session.log", async () => {
+  it("appends JSONL records to the session app log", async () => {
     const fs = new MemoryFileStore();
     const writer = new SessionWriter(
       fs,

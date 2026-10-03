@@ -1,18 +1,18 @@
-import type { UserIntent, FalseCompletion } from "@/core/governor/types";
+import type { UserIntent, Assumption } from "@/core/governor/types";
 import { IntentRow } from "./IntentRow";
-import { FalseCompletionRow } from "./FalseCompletionRow";
+import { AssumptionRow } from "./AssumptionRow";
 
 interface IntentsTabProperties {
   intentStack: UserIntent[];
   completedIntents: UserIntent[];
-  falseCompletions: FalseCompletion[];
-  onSelect: (intentId: string, falseCompletionId?: string) => void;
+  assumptions: Assumption[];
+  onSelect: (intentId: string, assumptionId?: string) => void;
 }
 
 export function IntentsTab({
   intentStack,
   completedIntents,
-  falseCompletions,
+  assumptions,
   onSelect,
 }: IntentsTabProperties) {
   if (intentStack.length === 0 && completedIntents.length === 0) {
@@ -29,13 +29,13 @@ export function IntentsTab({
       {rows.map(({ intent, isDone }, index) => (
         <div key={intent.id || `${isDone ? "done" : "active"}-${index}`}>
           <IntentRow intent={intent} isDone={isDone} onSelect={() => onSelect(intent.id)} />
-          {falseCompletions
-            .filter((falseCompletion) => falseCompletion.intent_id === intent.id)
-            .map((falseCompletion) => (
-              <FalseCompletionRow
-                key={falseCompletion.id}
-                falseCompletion={falseCompletion}
-                onSelect={() => onSelect(intent.id, falseCompletion.id)}
+          {assumptions
+            .filter((assumption) => assumption.intent_id === intent.id)
+            .map((assumption) => (
+              <AssumptionRow
+                key={assumption.id}
+                assumption={assumption}
+                onSelect={() => onSelect(intent.id, assumption.id)}
               />
             ))}
         </div>

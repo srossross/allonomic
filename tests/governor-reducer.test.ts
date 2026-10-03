@@ -1,10 +1,7 @@
 import { describe, it, expect } from "bun:test";
-import {
-  applyGovernorAction,
-  EMPTY_GOVERNOR_STATE,
-  governorActionFromCall,
-} from "../src/core/governor/reducer";
-import type { GovernorState, UserIntent, FalseCompletion } from "../src/core/governor/types";
+import { applyGovernorAction, EMPTY_GOVERNOR_STATE } from "../src/core/governor/reducer";
+import type { GovernorState, UserIntent } from "../src/core/governor/types";
+import { assumption } from "./helpers/governorFixtures";
 
 const intent = (id: string, kind: UserIntent["kind"] = "request"): UserIntent => ({
   id,
@@ -42,6 +39,18 @@ describe("governor reducer", () => {
     ).toBe("not_found");
   });
 
+  it("resolve_intent records the intent as resolved since the prompt; begin_prompt clears it", () => {
+    const first = applyGovernorAction(withStack(intent("a"), intent("b")), {
+      type: "resolve_intent",
+      id: "a",
+    }).state;
+    const second = applyGovernorAction(first, { type: "resolve_intent", id: "b" }).state;
+    expect(second.resolved_since_prompt.map((i) => i.id)).toEqual(["a", "b"]);
+    const cleared = applyGovernorAction(second, { type: "begin_prompt" }).state;
+    expect(cleared.resolved_since_prompt).toEqual([]);
+    expect(cleared.completed_intents.map((i) => i.id)).toEqual(["a", "b"]);
+  });
+
   it("pop_intent reports not_found and empty", () => {
     const single = withStack(intent("a"));
     expect(applyGovernorAction(single, { type: "pop_intent", id: "zz" }).result.status).toBe(
@@ -51,41 +60,13 @@ describe("governor reducer", () => {
       "empty"
     );
   });
-
-  it("maps legacy tool calls to actions", () => {
-    expect(
-      governorActionFromCall("push_intent", { id: "i1", kind: "question", description: "d" })
-    ).toEqual({
-      type: "push_intent",
-      intent: { id: "i1", kind: "question", description: "d", completed_when: null, changelog: [] },
-    });
-    const fallback = governorActionFromCall("push_intent", { kind: "bogus" });
-    expect(fallback).toMatchObject({ intent: { kind: "other" } });
-    expect(governorActionFromCall("resolve_intent", {})).toBeNull();
-    expect(governorActionFromCall("finish", {})).toBeNull();
-  });
 });
-
-const falseCompletion = (id: string, intent_id: string): FalseCompletion => ({
-  id,
-  intent_id,
-  summary: id,
-  completes_as: "c",
-  false_because: "f",
-  check: "k",
-  evidence: null,
-  resolution: null,
-  resolution_reason: null,
-  still_assumed: null,
-});
-
-const evidence = { source: "src/a.ts", quote: "const a = 1;" };
 
 describe("governor reducer: update_intent", () => {
-  it("changes only the provided fields and keeps id and falseCompletions", () => {
+  it("changes only the provided fields and keeps id and assumptions", () => {
     const state: GovernorState = {
       ...withStack(intent("a")),
-      false_completions: [falseCompletion("r1", "a")],
+      assumptions: [assumption("r1", "a")],
     };
     const { state: next, result } = applyGovernorAction(state, {
       type: "update_intent",
@@ -101,7 +82,7 @@ describe("governor reducer: update_intent", () => {
       completed_when: null,
       changelog: ["renamed"],
     });
-    expect(next.false_completions).toEqual(state.false_completions);
+    expect(next.assumptions).toEqual(state.assumptions);
 
     const kindOnly = applyGovernorAction(next, {
       type: "update_intent",
@@ -126,118 +107,54 @@ describe("governor reducer: update_intent", () => {
   });
 });
 
-describe("governor reducer: false completions", () => {
-  it("adds a false completion to an active intent", () => {
+describe("governor reducer: assumptions", () => {
+  it("records an assumption for an active intent", () => {
     const { state, result } = applyGovernorAction(withStack(intent("a")), {
-      type: "add_false_completion",
-      falseCompletion: falseCompletion("r1", "a"),
+      type: "record_assumption",
+      assumption: assumption("r1", "a"),
     });
-    expect(result.status).toBe("created");
-    expect(state.false_completions).toEqual([falseCompletion("r1", "a")]);
+    expect(result.status).toBe("recorded");
+    expect(state.assumptions).toEqual([assumption("r1", "a")]);
   });
 
-  it("rejects a false completion for an intent not on the active stack", () => {
-    const state = { ...withStack(intent("a")), completed_intents: [intent("done")] };
-    for (const intentId of ["missing", "done"]) {
-      const { state: next, result } = applyGovernorAction(state, {
-        type: "add_false_completion",
-        falseCompletion: falseCompletion("r1", intentId),
-      });
-      expect(result.status).toBe("not_found");
-      expect(next).toBe(state);
-    }
+  it("rejects an assumption for an intent not on the active stack", () => {
+    const state = withStack(intent("a"));
+    const outcome = applyGovernorAction(state, {
+      type: "record_assumption",
+      assumption: assumption("r1", "gone"),
+    });
+    expect(outcome.result.status).toBe("not_found");
+    expect(outcome.state).toBe(state);
   });
 
-  it("requires evidence for ruled_out and clarified", () => {
-    const state = { ...withStack(intent("a")), false_completions: [falseCompletion("r1", "a")] };
-    for (const resolution of ["ruled_out", "clarified"] as const) {
-      const rejected = applyGovernorAction(state, {
-        type: "resolve_false_completion",
-        id: "r1",
-        resolution,
-        reason: "no quote",
-      });
-      expect(rejected.result.status).toBe("error");
-      expect(rejected.state).toBe(state);
-
-      const { state: next, result } = applyGovernorAction(state, {
-        type: "resolve_false_completion",
-        id: "r1",
-        resolution,
-        evidence,
-        still_assumed: "nothing",
-      });
-      expect(result.status).toBe("resolved");
-      expect(next.false_completions[0]).toMatchObject({
-        resolution,
-        evidence,
-        resolution_reason: null,
-        still_assumed: "nothing",
-      });
-    }
-  });
-
-  it("replays a ruled_out resolve saved without still_assumed", () => {
-    const state = { ...withStack(intent("a")), false_completions: [falseCompletion("r1", "a")] };
-    const { state: next, result } = applyGovernorAction(state, {
-      type: "resolve_false_completion",
+  it("resolves with evidence, then reports already_resolved and not_found", () => {
+    const state = { ...withStack(intent("a")), assumptions: [assumption("r1", "a")] };
+    const resolved = applyGovernorAction(state, {
+      type: "resolve_assumption",
       id: "r1",
-      resolution: "ruled_out",
-      evidence,
+      evidence: "user confirmed",
     });
-    expect(result.status).toBe("resolved");
-    expect(next.false_completions[0].still_assumed).toBeNull();
-  });
-
-  it("requires a reason for invalid and superseded", () => {
-    const state = { ...withStack(intent("a")), false_completions: [falseCompletion("r1", "a")] };
-    for (const resolution of ["invalid", "superseded"] as const) {
-      const rejected = applyGovernorAction(state, {
-        type: "resolve_false_completion",
-        id: "r1",
-        resolution,
-        evidence,
-      });
-      expect(rejected.result.status).toBe("error");
-      expect(rejected.state).toBe(state);
-
-      const { state: next, result } = applyGovernorAction(state, {
-        type: "resolve_false_completion",
-        id: "r1",
-        resolution,
-        reason: "intent changed",
-      });
-      expect(result.status).toBe("resolved");
-      expect(next.false_completions[0]).toMatchObject({
-        resolution,
-        resolution_reason: "intent changed",
-      });
-    }
-  });
-
-  it("returns not_found and already_resolved without changing state", () => {
-    const state = {
-      ...withStack(intent("a")),
-      false_completions: [
-        { ...falseCompletion("r1", "a"), resolution: "invalid" as const, resolution_reason: "x" },
-      ],
-    };
-    const missing = applyGovernorAction(state, {
-      type: "resolve_false_completion",
-      id: "nope",
-      resolution: "invalid",
-      reason: "x",
+    expect(resolved.state.assumptions[0]).toMatchObject({
+      status: "resolved",
+      evidence: "user confirmed",
     });
-    expect(missing.result.status).toBe("not_found");
-    expect(missing.state).toBe(state);
-
-    const again = applyGovernorAction(state, {
-      type: "resolve_false_completion",
+    const again = applyGovernorAction(resolved.state, {
+      type: "resolve_assumption",
       id: "r1",
-      resolution: "superseded",
-      reason: "y",
+      evidence: "x",
     });
     expect(again.result.status).toBe("already_resolved");
-    expect(again.state).toBe(state);
+    expect(again.state).toBe(resolved.state);
+    const missing = applyGovernorAction(state, {
+      type: "resolve_assumption",
+      id: "nope",
+      evidence: "x",
+    });
+    expect(missing.result.status).toBe("not_found");
+  });
+
+  it("clear_assumptions empties the list", () => {
+    const state = { ...withStack(intent("a")), assumptions: [assumption("r1", "a")] };
+    expect(applyGovernorAction(state, { type: "clear_assumptions" }).state.assumptions).toEqual([]);
   });
 });

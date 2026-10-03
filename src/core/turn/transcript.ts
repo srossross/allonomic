@@ -199,6 +199,20 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
         contextMessages: [...t.contextMessages, { role: "human", content }],
       };
     }
+    case "presentation": {
+      return {
+        ...t,
+        messages: [
+          ...t.messages,
+          {
+            id: `presentation-${event.turnIndex}-${event.seq}`,
+            role: "assistant",
+            content: "",
+            presentation: event.presentation,
+          },
+        ],
+      };
+    }
     case "prompt_delivered": {
       return {
         ...t,

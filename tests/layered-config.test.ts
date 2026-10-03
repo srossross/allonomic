@@ -70,7 +70,7 @@ describe("layered config", () => {
       [
         "execution_mode: god",
         "network_access: true",
-        "governor_mode: no-false-completion",
+        "governor_mode: intent-only",
         "tools:",
         "  shell_4_full_access: false",
         "  read_file: true",
@@ -85,7 +85,7 @@ describe("layered config", () => {
     const settings = await resolveSettings(runtime, "/w", "s1");
     expect(settings.executionMode).toBe("read");
     expect(settings.networkAccess).toBe(false);
-    expect(settings.governorMode).toBe("no-false-completion");
+    expect(settings.governorMode).toBe("intent-only");
     expect(settings.enabledTools).not.toContain("shell_4_full_access");
     expect(settings.sandbox.deny).toContain("$PROJECT/secrets");
     expect(settings.sandbox.tiers[3].write).not.toContain("/");
@@ -150,5 +150,21 @@ describe("layered config", () => {
     const otherSession = await resolveSettings(runtime, "/w", "s2");
     expect(otherSession.networkAccess).toBe(false);
     expect(runtime.fs.files.has(REPO_SESSION)).toBe(false);
+  });
+
+  it("ui interceptor and worker text collapse are per-session settings", async () => {
+    const runtime = createMemoryRuntime();
+    const defaults = await resolveSettings(runtime, "/w", "s1");
+    expect(defaults.uiEnabled).toBe(true);
+    expect(defaults.collapseWorkerText).toBe(true);
+    await updateSessionSettings(runtime, "/w", "s1", {
+      uiEnabled: false,
+      collapseWorkerText: false,
+    });
+    const updated = await resolveSettings(runtime, "/w", "s1");
+    expect(updated.uiEnabled).toBe(false);
+    expect(updated.collapseWorkerText).toBe(false);
+    const otherSession = await resolveSettings(runtime, "/w", "s2");
+    expect(otherSession.uiEnabled).toBe(true);
   });
 });

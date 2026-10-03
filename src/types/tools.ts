@@ -19,7 +19,8 @@ export type UserPrompt =
       mode?: ExecutionMode;
       options: Array<{ value: string; label: string }>;
     }
-  | { kind: "text"; label: string; placeholder?: string };
+  | { kind: "text"; label: string; placeholder?: string }
+  | { kind: "assumption"; label: string; options: string[] };
 
 export type UserPromptValue = boolean | string;
 

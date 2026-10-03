@@ -4,7 +4,6 @@ import {
   DEFAULT_EXECUTION_MODE,
   DEFAULT_GOVERNOR_MODE,
   DEFAULT_MODEL_ID,
-  EXECUTION_MODE_LEVELS,
   GOVERNOR_MODES,
   THINKING_LEVELS,
   type ExecutionMode,
@@ -12,6 +11,7 @@ import {
   type ThinkingLevel,
 } from "../../types/chat";
 import { AVAILABLE_TOOLS } from "../../types/tools";
+import { tightenLayer } from "./tightenLayer";
 import type { Runtime } from "../ports";
 import { join } from "../paths";
 import {
@@ -44,6 +44,9 @@ export const layerSchema = z.object({
   network_access: z.boolean().optional(),
   governor_mode: z.enum(GOVERNOR_MODES).optional(),
   teacher: z.boolean().optional(),
+  ui: z.boolean().optional(),
+  collapse_worker_text: z.boolean().optional(),
+  shell_timeout_seconds: z.number().positive().optional(),
   model: z.string().optional(),
   thinking_level: z.enum(THINKING_LEVELS).optional(),
   tools: z.record(z.string(), z.boolean()).optional(),
@@ -72,6 +75,9 @@ export interface Settings {
   networkAccess: boolean;
   governorMode: GovernorMode;
   teacherEnabled: boolean;
+  uiEnabled: boolean;
+  collapseWorkerText: boolean;
+  shellTimeoutSeconds: number;
   model: string;
   thinkingLevel: ThinkingLevel;
   enabledTools: string[];
@@ -89,6 +95,9 @@ export const DEFAULT_SETTINGS: Settings = {
   networkAccess: false,
   governorMode: DEFAULT_GOVERNOR_MODE,
   teacherEnabled: true,
+  uiEnabled: true,
+  collapseWorkerText: true,
+  shellTimeoutSeconds: 120,
   model: DEFAULT_MODEL_ID,
   thinkingLevel: "Low",
   enabledTools: AVAILABLE_TOOLS.map((t) => t.name),
@@ -127,41 +136,14 @@ export function applyLayer(
     networkAccess: layer.network_access ?? settings.networkAccess,
     governorMode: layer.governor_mode ?? settings.governorMode,
     teacherEnabled: layer.teacher ?? settings.teacherEnabled,
+    uiEnabled: layer.ui ?? settings.uiEnabled,
+    collapseWorkerText: layer.collapse_worker_text ?? settings.collapseWorkerText,
+    shellTimeoutSeconds: layer.shell_timeout_seconds ?? settings.shellTimeoutSeconds,
     model: layer.model ?? settings.model,
     thinkingLevel: layer.thinking_level ?? settings.thinkingLevel,
     enabledTools: applyTools(settings.enabledTools, layer.tools),
     interceptors: applyInterceptors(settings.interceptors, layer.interceptors),
     sandbox: layer.sandbox ? mergeSandbox(settings.sandbox, layer.sandbox) : settings.sandbox,
-  };
-}
-
-function tightenLayer(settings: Settings, layer: SettingsLayer): Settings {
-  const mode = layer.execution_mode;
-  const governor = layer.governor_mode;
-  const disabled = new Set(
-    Object.entries(layer.tools ?? {})
-      .filter(([, isEnabled]) => !isEnabled)
-      .map(([name]) => name)
-  );
-  return {
-    executionMode:
-      mode && EXECUTION_MODE_LEVELS[mode] < EXECUTION_MODE_LEVELS[settings.executionMode]
-        ? mode
-        : settings.executionMode,
-    networkAccess: layer.network_access !== false && settings.networkAccess,
-    governorMode:
-      governor && GOVERNOR_MODES.indexOf(governor) > GOVERNOR_MODES.indexOf(settings.governorMode)
-        ? governor
-        : settings.governorMode,
-    teacherEnabled: layer.teacher === true || settings.teacherEnabled,
-    model: settings.model,
-    thinkingLevel: settings.thinkingLevel,
-    enabledTools: settings.enabledTools.filter((name) => !disabled.has(name)),
-    interceptors: settings.interceptors,
-    sandbox: {
-      ...settings.sandbox,
-      deny: [...settings.sandbox.deny, ...(layer.sandbox?.deny ?? [])],
-    },
   };
 }
 
@@ -171,6 +153,9 @@ function defaultUserConfig(sandbox: SandboxConfig): UserConfig {
     network_access: DEFAULT_SETTINGS.networkAccess,
     governor_mode: DEFAULT_SETTINGS.governorMode,
     teacher: DEFAULT_SETTINGS.teacherEnabled,
+    ui: DEFAULT_SETTINGS.uiEnabled,
+    collapse_worker_text: DEFAULT_SETTINGS.collapseWorkerText,
+    shell_timeout_seconds: DEFAULT_SETTINGS.shellTimeoutSeconds,
     model: DEFAULT_SETTINGS.model,
     thinking_level: DEFAULT_SETTINGS.thinkingLevel,
     sandbox: sandboxToLayer(sandbox),
@@ -271,12 +256,31 @@ export async function resolveSettings(
   return tightenLayer(settings, repoSession);
 }
 
+export function changedSettings(
+  previous: Settings | undefined,
+  next: Settings
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(next).filter(
+      ([key, value]) =>
+        !previous || JSON.stringify(Reflect.get(previous, key)) !== JSON.stringify(value)
+    )
+  );
+}
+
 function patchToLayer(patch: SettingsPatch): SettingsLayer {
   return {
     ...(patch.executionMode && { execution_mode: patch.executionMode }),
     ...(patch.networkAccess !== undefined && { network_access: patch.networkAccess }),
     ...(patch.governorMode && { governor_mode: patch.governorMode }),
     ...(patch.teacherEnabled !== undefined && { teacher: patch.teacherEnabled }),
+    ...(patch.uiEnabled !== undefined && { ui: patch.uiEnabled }),
+    ...(patch.collapseWorkerText !== undefined && {
+      collapse_worker_text: patch.collapseWorkerText,
+    }),
+    ...(patch.shellTimeoutSeconds !== undefined && {
+      shell_timeout_seconds: patch.shellTimeoutSeconds,
+    }),
     ...(patch.model && { model: patch.model }),
     ...(patch.thinkingLevel && { thinking_level: patch.thinkingLevel }),
     ...(patch.tools && { tools: patch.tools }),

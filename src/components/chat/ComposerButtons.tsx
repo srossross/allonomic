@@ -18,17 +18,25 @@ export function ComposerButtons({
   onStop?: () => void;
 }) {
   const stop = (
-    <button type="button" onClick={onStop} className={pillButtonClass} aria-label="Stop (Escape)">
+    <button
+      type="button"
+      onClick={onStop}
+      className={pillButtonClass}
+      aria-label="Stop (Escape)"
+      title="Stop (Esc)"
+    >
       <div className="size-2.5 rounded-xs bg-red-500" />
-      <span>Stop</span>
-      <kbd className="text-2xs opacity-60">Esc</kbd>
     </button>
   );
   const play = (
-    <button type="button" onClick={onSend} className={pillButtonClass} aria-label="Play (Enter)">
+    <button
+      type="button"
+      onClick={onSend}
+      className={pillButtonClass}
+      aria-label="Play (Enter)"
+      title="Play (↵)"
+    >
       <Play className="size-3" />
-      <span>Play</span>
-      <kbd className="text-2xs opacity-60">↵</kbd>
     </button>
   );
   switch (phase) {
@@ -39,20 +47,16 @@ export function ComposerButtons({
           onClick={onPause}
           className={pillButtonClass}
           aria-label="Pause (Escape)"
+          title="Pause (Esc)"
         >
           <Pause className="size-3" />
-          <span>Pause</span>
-          <kbd className="text-2xs opacity-60">Esc</kbd>
         </button>
       );
     }
     case "pausing": {
       return (
         <>
-          <span className="text-muted-foreground flex items-center gap-1.5 px-1 text-xs">
-            <Loader2 className="size-3 animate-spin" />
-            Pausing…
-          </span>
+          <Loader2 className="text-muted-foreground size-3 animate-spin" />
           {stop}
         </>
       );

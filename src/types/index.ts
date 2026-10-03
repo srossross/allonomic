@@ -4,3 +4,4 @@ export * from "./inspector";
 export * from "./project";
 export * from "./tab";
 export * from "./persistence";
+export * from "./groupColors";

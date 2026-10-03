@@ -37,41 +37,34 @@ export interface IntentBriefChanges {
   dropped: UserIntent[];
 }
 
-function intentBlock(intent: UserIntent, state: GovernorState, isChanged: boolean): string {
-  const directives = state.false_completions
-    .filter((fc) => fc.intent_id === intent.id && fc.resolution === null && fc.check)
-    .map((fc) => `  * ${fc.check}`);
+function intentBlock(intent: UserIntent, isChanged: boolean): string {
   return [
     `Goal: ${intent.description}`,
     isChanged && intent.changelog.length > 0 && `Changed: ${intent.changelog.at(-1)}`,
     intent.completed_when && `Done when: ${intent.completed_when}`,
-    directives.length > 0 && `To accomplish this, consider:\n${directives.join("\n")}`,
+    intent.overstep && `You would be overstepping the users intent if you: ${intent.overstep}`,
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-export function buildIntentBrief(
-  { added, changed, dropped }: IntentBriefChanges,
-  state: GovernorState
-): string | undefined {
+export function buildIntentBrief({
+  added,
+  changed,
+  dropped,
+}: IntentBriefChanges): string | undefined {
   const blocks = [
-    ...added.map((intent) => intentBlock(intent, state, false)),
-    ...changed.map((intent) => intentBlock(intent, state, true)),
+    ...added.map((intent) => intentBlock(intent, false)),
+    ...changed.map((intent) => intentBlock(intent, true)),
     ...dropped.map((intent) => `No longer needed: ${intent.description}`),
   ];
   return blocks.length > 0 ? blocks.join("\n\n") : undefined;
 }
 
-export function buildFalseCompletionFeedback(state: GovernorState): string | undefined {
-  const blocks = state.intent_stack.flatMap((intent) =>
-    state.false_completions
-      .filter((fc) => fc.intent_id === intent.id && fc.resolution === null)
-      .map((fc) => `${intent.description}\n${fc.summary}: ${fc.false_because}\nCheck: ${fc.check}`)
-  );
-  return blocks.length > 0 ? blocks.join("\n\n") : undefined;
-}
-
-export function buildRejectionContext(state: GovernorState): string {
-  return `\n\nActive Intents: ${JSON.stringify(state.intent_stack)}\n`;
+export function assumptionSection(state: GovernorState): PromptSection {
+  return {
+    title: "Assumptions",
+    body:
+      state.assumptions.length === 0 ? "(none)" : JSON.stringify(state.assumptions, null, 2),
+  };
 }

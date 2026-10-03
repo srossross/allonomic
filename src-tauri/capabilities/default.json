@@ -139,6 +139,16 @@
       ]
     },
     {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "sh",
+          "cmd": "/bin/sh",
+          "args": true
+        }
+      ]
+    },
+    {
       "identifier": "fs:allow-read-text-file",
       "allow": [
         {

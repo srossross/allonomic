@@ -1,21 +1,18 @@
 import { describe, it, expect } from "bun:test";
-import YAML from "yaml";
 import { createMemoryRuntime } from "../src/adapters/memory/runtime";
 import { AgentRunner } from "../src/core/graph/runner";
 import { rehydrateSession } from "../src/core/session/rehydration";
-import { buildHistory } from "../src/core/history";
-import { createTurnEventLog } from "../src/core/turn/eventLog";
-import { saveTurnEvents } from "../src/core/telemetry/session";
-import type { TurnEvent } from "../src/core/turn/events";
+import { loadTurn, turnDirFor } from "../src/core/turn/turnFiles";
+import { USER_ACTOR, type TurnEvent } from "../src/core/turn/events";
 import {
   FailingOnceModel,
   FakeChatModel,
   toolCall,
   type ScriptedTurn,
 } from "./helpers/fakeChatModel";
+import { writeTurn } from "./helpers/turnWriter";
 
 const SESSION_DIR = "/w/.allonomic/sessions/s1";
-const EVENTS_1 = `${SESSION_DIR}/turns/001/events.yml`;
 
 function runnerFor(
   runtime: ReturnType<typeof createMemoryRuntime>,
@@ -32,22 +29,25 @@ function runnerFor(
   });
 }
 
-async function writeCrashedTurn(runtime: ReturnType<typeof createMemoryRuntime>) {
-  const { sink, events } = createTurnEventLog(1, []);
-  sink.emit({ type: "turn_started", threadId: "s1", prompt: "build" });
-  sink.emit({
-    type: "model_step",
-    stepId: "s1-step",
-    content: "",
-    toolCalls: [{ id: "c1", name: "shell_4_full_access", args: { command: "make" } }],
-    durationMs: 5,
+async function writeCrashedTurn(runtime: ReturnType<typeof createMemoryRuntime>, hasStep = true) {
+  await writeTurn(runtime.fs, SESSION_DIR, 1, (sink) => {
+    const user = sink.scope(USER_ACTOR);
+    user.emit({ type: "turn_started", threadId: "s1", prompt: "build" });
+    user.close();
+    if (!hasStep) return;
+    sink.emit({
+      type: "model_step",
+      stepId: "s1-step",
+      content: "",
+      toolCalls: [{ id: "c1", name: "shell_4_full_access", args: { command: "make" } }],
+      durationMs: 5,
+    });
   });
-  await saveTurnEvents(runtime.fs, SESSION_DIR, 1, events);
 }
 
-function eventTypes(path: string, runtime: ReturnType<typeof createMemoryRuntime>): string[] {
-  const parsed: { events: TurnEvent[] } = YAML.parse(runtime.fs.files.get(path) ?? "");
-  return parsed.events.map((e) => e.type);
+async function eventTypes(runtime: ReturnType<typeof createMemoryRuntime>): Promise<string[]> {
+  const events = await loadTurn(runtime.fs, turnDirFor(SESSION_DIR, 1));
+  return events.map((e) => e.type);
 }
 
 function answering(runner: AgentRunner, choice: string, events: TurnEvent[] = []) {
@@ -60,25 +60,25 @@ function answering(runner: AgentRunner, choice: string, events: TurnEvent[] = []
 }
 
 describe("crash recovery", () => {
-  it("saves events.yml while the turn is still running", async () => {
+  it("appends events to disk while the turn is still running", async () => {
     const runtime = createMemoryRuntime();
     const runner = runnerFor(runtime, [
       { toolCalls: [toolCall("shell_4_full_access", { command: "make" }, "c1")] },
       "done",
     ]);
-    let midTurn: string[] = [];
+    let midTurn: Promise<string[]> = Promise.resolve([]);
     await runner.run("build", "s1", {
       onEvent: (event) => {
         if (event.type !== "prompt_requested") return;
         setTimeout(() => {
-          midTurn = eventTypes(EVENTS_1, runtime);
+          midTurn = eventTypes(runtime);
           runner.answerPrompt(event.promptId, true);
         }, 5);
       },
     });
-    expect(midTurn).toContain("model_step");
-    expect(midTurn).not.toContain("turn_completed");
-    expect(eventTypes(EVENTS_1, runtime)).toContain("turn_completed");
+    expect(await midTurn).toContain("model_step");
+    expect(await midTurn).not.toContain("turn_completed");
+    expect(await eventTypes(runtime)).toContain("turn_completed");
   });
 
   it("closes an unfinished turn once and reports its unanswered calls", async () => {
@@ -88,11 +88,12 @@ describe("crash recovery", () => {
     const first = await rehydrateSession(runtime.fs, "/w", "s1");
     expect(first.unansweredCalls.map((c) => c.id)).toEqual(["c1"]);
     expect(first.messages.at(-1)?.content).toBe("Error: The app shut down during this turn");
-    expect(eventTypes(EVENTS_1, runtime).at(-1)).toBe("turn_failed");
+    const afterFirst = await eventTypes(runtime);
+    expect(afterFirst.at(-1)).toBe("turn_failed");
 
     await rehydrateSession(runtime.fs, "/w", "s1");
-    const failures = eventTypes(EVENTS_1, runtime).filter((t) => t === "turn_failed");
-    expect(failures).toHaveLength(1);
+    const afterSecond = await eventTypes(runtime);
+    expect(afterSecond.filter((t) => t === "turn_failed")).toHaveLength(1);
   });
 
   it("re-run asks again for approval, runs the tool, and the agent continues", async () => {
@@ -111,7 +112,6 @@ describe("crash recovery", () => {
     const events: TurnEvent[] = [];
 
     const result = await runner.recover("s1", session.unansweredCalls, {
-      history: buildHistory(session.messages),
       onEvent: answering(runner, "rerun", events),
     });
 
@@ -133,7 +133,6 @@ describe("crash recovery", () => {
     const events: TurnEvent[] = [];
 
     await runner.recover("s1", session.unansweredCalls, {
-      history: buildHistory(session.messages),
       onEvent: answering(runner, "skip", events),
     });
 
@@ -144,9 +143,7 @@ describe("crash recovery", () => {
 
   it("try again with no unanswered calls resumes a turn that crashed before any step", async () => {
     const runtime = createMemoryRuntime();
-    const { sink, events } = createTurnEventLog(1, []);
-    sink.emit({ type: "turn_started", threadId: "s1", prompt: "build" });
-    await saveTurnEvents(runtime.fs, SESSION_DIR, 1, events);
+    await writeCrashedTurn(runtime, false);
     const session = await rehydrateSession(runtime.fs, "/w", "s1");
     const model = new FakeChatModel(["resumed"]);
     const runner = new AgentRunner({
@@ -158,8 +155,9 @@ describe("crash recovery", () => {
       createModel: () => model,
     });
 
-    const result = await runner.recover("s1", [], { history: buildHistory(session.messages) });
+    const result = await runner.recover("s1", []);
 
+    expect(session.nextTurnIndex).toBe(2);
     expect(result.finalResponse).toBe("resumed");
     expect(model.calls[0].map((m) => m._getType())).toEqual(["system", "human"]);
   });
@@ -179,9 +177,9 @@ describe("crash recovery", () => {
       createModel: () => model,
     });
     await expect(runner.run("list", "s1")).rejects.toThrow("boom");
-    const session = await rehydrateSession(runtime.fs, "/w", "s1");
+    await rehydrateSession(runtime.fs, "/w", "s1");
 
-    const result = await runner.recover("s1", [], { history: buildHistory(session.messages) });
+    const result = await runner.recover("s1", []);
 
     expect(result.finalResponse).toBe("done");
     expect(runtime.shell.calls).toHaveLength(1);

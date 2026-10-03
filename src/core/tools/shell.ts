@@ -1,7 +1,7 @@
 import { tool } from "@langchain/core/tools";
 import { rethrowIfFatal } from "./fatal";
 import { DEFAULT_EXECUTION_MODE, LEVEL_MODES, type AccessLevel } from "@/types";
-import type { Runtime, ShellResult } from "../ports";
+import type { Runtime } from "../ports";
 import { createRejectedResult } from "../userPrompt";
 import type { AgentToolOptions } from "./index";
 import {
@@ -11,13 +11,18 @@ import {
   type ExecutionModeSource,
 } from "./approval";
 import { TOOL_SPECS } from "./specs";
-import { formatShellResult } from "./shellResult";
+import { formatBackgroundedResult, formatShellResult } from "./shellResult";
+import { ToolStops, type TrackedToolCall } from "./toolStops";
+import { superviseDetachable } from "../superviseProcess";
+import { createJobTools, startBackgroundJob } from "./jobTools";
+import { BackgroundJobs, type JobLauncher, type JobSpec } from "../jobs/backgroundJobs";
+import { readToolCallId } from "../graph/types";
 import { resolveSettings } from "../config/settings";
+import { join } from "../paths";
 import {
   SANDBOX_TMP_ROOT,
   sandboxRules,
   sandboxVariables,
-  type SandboxLevel,
   type SandboxRules,
   type SandboxVariables,
 } from "./sandboxConfig";
@@ -60,7 +65,7 @@ function sandboxInvocation(
   platform: string,
   rules: SandboxRules,
   hasNetwork: boolean,
-  { project, tmp }: SandboxVariables,
+  { tmp }: SandboxVariables,
   command: string
 ): { program: string; args: string[] } {
   switch (platform) {
@@ -73,8 +78,7 @@ function sandboxInvocation(
           ...sandboxParams(rules),
           "/bin/sh",
           "-c",
-          'mkdir -p "$1" 2>/dev/null; cd "$0" && TMPDIR="$1" exec /bin/sh -c "$2"',
-          project,
+          'mkdir -p "$0" 2>/dev/null; TMPDIR="$0" exec /bin/sh -c "$1"',
           tmp,
           command,
         ],
@@ -86,21 +90,17 @@ function sandboxInvocation(
   }
 }
 
-async function timed(run: () => Promise<ShellResult>): Promise<string> {
-  const start = performance.now();
-  const { stdout, stderr, code } = await run();
-  return formatShellResult(stdout, stderr, code, performance.now() - start);
-}
-
-export function createShellTools(
+export function createShellLauncher(
   runtime: Runtime,
   workspaceDir: string,
-  executionMode: ExecutionModeSource = DEFAULT_EXECUTION_MODE,
-  options: AgentToolOptions = {}
-) {
-  const runSandboxed = async (level: SandboxLevel, command: string) => {
+  sessionId?: string
+): JobLauncher {
+  return async ({ level, command }) => {
+    const settings = await resolveSettings(runtime, workspaceDir, sessionId);
     const variables = await sandboxVariables(runtime, workspaceDir);
-    const settings = await resolveSettings(runtime, workspaceDir, options.sessionId);
+    const logDir = join(variables.tmp, "jobs", sessionId ?? "default");
+    if (level === 4)
+      return { program: "sh", args: ["-c", command], cwd: variables.project, logDir };
     const rules = sandboxRules(settings.sandbox, level, variables);
     const { program, args } = sandboxInvocation(
       runtime.platform,
@@ -109,18 +109,64 @@ export function createShellTools(
       variables,
       command
     );
-    return timed(() => runtime.shell.execute(program, args));
+    return { program, args, cwd: variables.project, logDir };
   };
+}
 
-  const runUnsandboxed = async (command: string) => {
-    const workdir = await runtime.paths.resolve(workspaceDir);
-    return timed(() =>
-      runtime.shell.execute("sh", ["-c", 'cd "$0" && exec /bin/sh -c "$1"', workdir, command])
+interface ShellToolInput {
+  command: string;
+  background?: boolean;
+  wait_for?: string;
+}
+
+export function createShellTools(
+  runtime: Runtime,
+  workspaceDir: string,
+  executionMode: ExecutionModeSource = DEFAULT_EXECUTION_MODE,
+  options: AgentToolOptions = {}
+) {
+  const stops = options.stops ?? new ToolStops();
+  const launch = createShellLauncher(runtime, workspaceDir, options.sessionId);
+  const jobs = options.jobs ?? new BackgroundJobs(runtime.shell, runtime.fs, launch);
+
+  const run = async (spec: JobSpec, tracked: TrackedToolCall) => {
+    const settings = await resolveSettings(runtime, workspaceDir, options.sessionId);
+    const { program, args, cwd, logDir } = await launch(spec);
+    const start = performance.now();
+    let stdout = "";
+    let stderr = "";
+    const adopted: { append?: (text: string) => void } = {};
+    const process = await runtime.shell.spawn(program, args, {
+      cwd,
+      onOutput: (stream, text) => {
+        if (adopted.append) adopted.append(text);
+        else if (stream === "stdout") stdout += text;
+        else stderr += text;
+      },
+    });
+    const result = await superviseDetachable(
+      process,
+      () => ({ stdout, stderr }),
+      { signal: tracked.signal, timeoutMs: settings.shellTimeoutSeconds * 1000 },
+      tracked.background
     );
+    const durationMs = performance.now() - start;
+    if (result)
+      return formatShellResult(
+        result.stdout,
+        result.stderr,
+        result.code,
+        durationMs,
+        result.termination
+      );
+    const job = jobs.adopt(spec, process, stdout + stderr, logDir);
+    adopted.append = job.append;
+    await jobs.flushLog(job.info.id);
+    return formatBackgroundedResult(stdout, stderr, job.info, durationMs);
   };
 
   const shellTool = (level: AccessLevel, spec: typeof TOOL_SPECS.shellReadOnly) =>
-    tool(async ({ command }: { command: string }, config) => {
+    tool(async ({ command, background, wait_for }: ShellToolInput, config) => {
       try {
         const mode = await currentMode(executionMode);
         const prompt = {
@@ -131,7 +177,14 @@ export function createShellTools(
         };
         if (requiresApproval(level, mode) && !(await isConfirmedByUser(config, prompt)))
           return createRejectedResult(spec.name, prompt);
-        return level === 4 ? await runUnsandboxed(command) : await runSandboxed(level, command);
+        const jobSpec = { command, level, toolName: spec.name };
+        if (background) return await startBackgroundJob(jobs, jobSpec, wait_for);
+        const tracked = stops.track(readToolCallId(config), config.signal);
+        try {
+          return await run(jobSpec, tracked);
+        } finally {
+          tracked.end();
+        }
       } catch (error: unknown) {
         rethrowIfFatal(error);
         const message = error instanceof Error ? error.message : String(error);
@@ -144,5 +197,6 @@ export function createShellTools(
     shellTool(2, TOOL_SPECS.shellReadOnly),
     shellTool(3, TOOL_SPECS.shellProjectWrite),
     shellTool(4, TOOL_SPECS.shellFullAccess),
+    ...createJobTools(jobs),
   ];
 }

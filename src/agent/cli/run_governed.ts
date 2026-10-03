@@ -2,6 +2,7 @@ import path from "node:path";
 import { AgentRunner } from "../../core/graph/runner";
 import { GovernorInterceptor } from "../../core/governor/interceptor";
 import { ToolTeacherInterceptor } from "../../core/teacher/interceptor";
+import { UiInterceptor } from "../../core/ui/interceptor";
 import { createNodeRuntime } from "../../adapters/node/runtime";
 import { formatTraceLine } from "../../core/turn/trace";
 import { answerPromptsWith, isYesFlag } from "./autoAnswer";
@@ -13,10 +14,11 @@ async function main() {
   const runtime = createNodeRuntime();
   const governor = new GovernorInterceptor({ runtime });
   const teacher = new ToolTeacherInterceptor({ runtime });
+  const ui = new UiInterceptor({ runtime, intents: governor });
   const runner = new AgentRunner({
     runtime,
     workspaceDir,
-    interceptors: [teacher, governor],
+    interceptors: [teacher, governor, ui],
   });
 
   const cliArguments = process.argv.slice(2);

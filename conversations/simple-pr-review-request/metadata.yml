@@ -1,0 +1,7 @@
+session_id: session-1790870541471
+title: Summarize PR Comments
+closed: false
+created_at: 2026-10-01T16:02:21.471Z
+updated_at: 2026-10-01T16:03:33.806Z
+turn_count: 1
+last_prompt: Get pr comments and summarize them for me

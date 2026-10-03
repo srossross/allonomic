@@ -25,7 +25,7 @@ import { PLACEHOLDERS, statusText, type ComposerPhase } from "./composerPhase";
 
 const GOVERNOR_MODE_LABELS: Record<GovernorMode, string> = {
   off: "off",
-  "no-false-completion": "on, false completion off",
+  "intent-only": "on, assumptions off",
   full: "on",
 };
 

@@ -157,7 +157,35 @@ describe("workflow state machine", () => {
     expect(String(result.messages[2].content)).toContain("[Strict Feedback]: try again");
     expect(model.calls.length).toBe(2);
     expect(verdicts).toBe(2);
-    expect(eventTypes()).toEqual(["waiting", "model_step", "exit_retry", "waiting", "model_step"]);
+    expect(eventTypes()).toEqual([
+      "waiting",
+      "model_step",
+      "exit_retry",
+      "waiting",
+      "model_step",
+      "interceptor_passed",
+    ]);
+  });
+
+  it("onPresent runs after all exit verdicts allow, never on a rejected finish", async () => {
+    const order: string[] = [];
+    let verdicts = 0;
+    const presenter: AgentInterceptor = {
+      name: "Presenter",
+      onPresent: async () => {
+        order.push("present");
+      },
+    };
+    const strict: AgentInterceptor = {
+      name: "Strict",
+      onAgentFinish: async () => {
+        order.push("finish");
+        return ++verdicts === 1 ? { allowFinish: false, feedback: "again" } : { allowFinish: true };
+      },
+    };
+    const { compiled } = build(["first", "second"], { interceptors: [presenter, strict] });
+    await invoke(compiled, { messages: [new HumanMessage("go")] });
+    expect(order).toEqual(["finish", "finish", "present"]);
   });
 
   it("entry interceptor runs once for a human prompt that includes an approval", async () => {

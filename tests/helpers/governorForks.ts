@@ -8,9 +8,10 @@ import { scriptedGovernorModel } from "./governorModel";
 const STUB_PROMPTS: Record<string, string> = {
   "preamble.md": "PREAMBLE",
   "entry.md": "ENTRY",
-  "exit.md": "EXIT",
-  "false_completion.md": "FC_LIST",
-  "false_completion_merge.md": "FC_MERGE",
+  "assumptions_list.md": "LIST",
+  "assumptions_classify.md": "CLASSIFY",
+  "assumptions_ask.md": "ASK",
+  "assumptions_decide.md": "DECIDE",
 };
 
 export type MemoryRuntime = ReturnType<typeof createMemoryRuntime>;
@@ -51,10 +52,10 @@ export const forks = (events: TurnEvent[]) =>
 
 export const passes = (events: TurnEvent[]) => forks(events).map((e) => e.pass);
 
-export const instructionsOf = (events: TurnEvent[], pass: string) =>
-  forks(events).find((e) => e.pass === pass)?.messages[0]?.content ?? "";
-
 export const texts = (messages: BaseMessage[]) => messages.map((m) => messageText(m.content));
 
 export const firstInputFor = (inputs: BaseMessage[][], marker: string) =>
   inputs.find((messages) => messageText(messages.at(-1)!.content).includes(marker)) ?? [];
+
+export const instructionsOf = (inputs: BaseMessage[][], marker: string) =>
+  messageText(firstInputFor(inputs, marker).at(-1)?.content ?? "");

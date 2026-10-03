@@ -3,29 +3,23 @@ import type { BaseMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 import { findApiKey } from "../../common/env";
 import type { GovernorModel } from "./fork";
-import type { AgentInterceptor, ExitVerdict, PipelineContext } from "../graph/types";
+import type { AgentInterceptor, EntryBrief, ExitVerdict, PipelineContext } from "../graph/types";
 import type { GovernorState, UserIntent } from "./types";
 import { DEFAULT_MODEL_ID } from "../../types/chat";
 import { applyGovernorAction } from "./reducer";
-import {
-  createGovernorPromptTools,
-  createGovernorExitTools,
-  type ExitVerdictSignal,
-  type GovernorDispatch,
-  type IntentBlocks,
-} from "./tools";
+import { createGovernorPromptTools, type GovernorDispatch } from "./tools";
 import { GovernorForkRunner } from "./forkRunner";
-import {
-  FalseCompletionPasses,
-  falseCompletionBlocks,
-  falseCompletionSection,
-} from "./falseCompletions";
-import { runReconciliation, verdictEmitter } from "./reconciliation";
-import { buildFalseCompletionFeedback, buildIntentBrief, buildRejectionContext } from "./prompts";
+import { assumptionSection, buildIntentBrief } from "./prompts";
+import { runAssumptionExit, runDecide, type ExitOutcome } from "./assumptionExit";
+import type { ExitDecision } from "./assumptionTools";
+
+function toOutcome(decided: ExitDecision): ExitOutcome {
+  return decided.kind === "approve"
+    ? { approved: true }
+    : { approved: false, feedback: decided.why };
+}
 
 export type { GovernorModel } from "./fork";
-
-const NO_BLOCKS: IntentBlocks = { resolve: () => null, approve: () => null };
 
 export interface GovernorInterceptorOptions {
   runtime: Runtime;
@@ -37,10 +31,9 @@ export interface GovernorInterceptorOptions {
 
 export class GovernorInterceptor implements AgentInterceptor {
   private apiKey?: string;
-  private hasFalseCompletions = true;
+  private hasAssumptions = true;
   private isEnabled = true;
   private forks: GovernorForkRunner;
-  private falseCompletions: FalseCompletionPasses;
   name = "Governor";
   description =
     "Tracks the user's intents and checks that the worker's actions and results satisfy them.";
@@ -55,7 +48,8 @@ export class GovernorInterceptor implements AgentInterceptor {
     this.state = {
       intent_stack: options.initialState?.intent_stack ?? [],
       completed_intents: options.initialState?.completed_intents ?? [],
-      false_completions: options.initialState?.false_completions ?? [],
+      assumptions: options.initialState?.assumptions ?? [],
+      resolved_since_prompt: options.initialState?.resolved_since_prompt ?? [],
     };
     this.forks = new GovernorForkRunner({
       runtime: options.runtime,
@@ -64,11 +58,8 @@ export class GovernorInterceptor implements AgentInterceptor {
       apiKey: this.apiKey,
       createModel: options.createModel,
       getIntents: () => this.state.intent_stack,
-      getSections: ({ hideFalseCompletions }) => [
-        falseCompletionSection(this.state, hideFalseCompletions || !this.hasFalseCompletions),
-      ],
+      getSections: () => [assumptionSection(this.state)],
     });
-    this.falseCompletions = new FalseCompletionPasses(this.forks);
   }
 
   private dispatcher(context: PipelineContext, phase: "entry" | "exit"): GovernorDispatch {
@@ -80,24 +71,6 @@ export class GovernorInterceptor implements AgentInterceptor {
     };
   }
 
-  private reconcile(
-    context: PipelineContext,
-    conversation: BaseMessage[],
-    dispatch: GovernorDispatch,
-    phase: "entry" | "exit"
-  ): Promise<void> {
-    return runReconciliation({
-      context,
-      conversation,
-      dispatch,
-      phase,
-      interceptor: this.name,
-      getState: () => this.state,
-      hasFalseCompletions: this.hasFalseCompletions,
-      falseCompletions: this.falseCompletions,
-    });
-  }
-
   public setModel(modelName: string, thinkingBudget?: number) {
     this.forks.modelName = modelName;
     this.forks.thinkingBudget = thinkingBudget;
@@ -107,8 +80,8 @@ export class GovernorInterceptor implements AgentInterceptor {
     return this.forks.modelName;
   }
 
-  public setHasFalseCompletions(hasFalseCompletions: boolean) {
-    this.hasFalseCompletions = hasFalseCompletions;
+  public setHasAssumptions(hasAssumptions: boolean) {
+    this.hasAssumptions = hasAssumptions;
   }
 
   public setIsEnabled(isEnabled: boolean) {
@@ -119,24 +92,33 @@ export class GovernorInterceptor implements AgentInterceptor {
     return this.isEnabled;
   }
 
+  public resolvedSincePrompt(): UserIntent[] {
+    return this.state.resolved_since_prompt;
+  }
+
   async onUserPrompt(
     conversation: BaseMessage[],
     context: PipelineContext
-  ): Promise<string | undefined> {
+  ): Promise<EntryBrief | undefined> {
     if (!this.isEnabled) return;
 
-    const before = this.state.intent_stack;
     const dispatch = this.dispatcher(context, "entry");
-    const emitFinish = verdictEmitter(context, this.name, "entry", true);
-
+    dispatch({ type: "begin_prompt" });
+    const before = this.state.intent_stack;
     let areIntentsFinished = false;
     const promptTools = createGovernorPromptTools(dispatch, (reasoning) => {
       if (areIntentsFinished) return;
       areIntentsFinished = true;
-      emitFinish(reasoning);
+      context.events.emit({
+        type: "governor_verdict",
+        phase: "entry",
+        interceptor: this.name,
+        approved: true,
+        reasoning,
+      });
     });
 
-    const { scratchpad } = await this.forks.run({
+    await this.forks.run({
       context,
       conversation,
       promptFile: "entry.md",
@@ -145,8 +127,6 @@ export class GovernorInterceptor implements AgentInterceptor {
       nudge: "Adjust the intent stack for the latest user message, then call finish().",
       phase: "entry",
     });
-
-    await this.reconcile(context, scratchpad, dispatch, "entry");
 
     const after = this.state.intent_stack;
     const previous = (intent: UserIntent) => before.find((b) => b.id === intent.id);
@@ -158,17 +138,14 @@ export class GovernorInterceptor implements AgentInterceptor {
       }),
       dropped: before.filter((intent) => after.every((a) => a.id !== intent.id)),
     };
-    const text = buildIntentBrief(changes, this.state);
+    const text = buildIntentBrief(changes);
     if (!text) return;
-    context.events.emit({
-      type: "governor_brief",
-      interceptor: this.name,
+    return {
       text,
       doneWhen: [...changes.added, ...changes.changed].flatMap((intent) =>
         intent.completed_when ? [intent.completed_when] : []
       ),
-    });
-    return text;
+    };
   }
 
   async onAgentFinish(conversation: BaseMessage[], context: PipelineContext): Promise<ExitVerdict> {
@@ -176,45 +153,17 @@ export class GovernorInterceptor implements AgentInterceptor {
       return { allowFinish: true };
     }
 
-    const dispatch = this.dispatcher(context, "exit");
-    await this.reconcile(context, conversation, dispatch, "exit");
-
-    let verdict: ExitVerdictSignal | null = null;
-    const onVerdict = (v: ExitVerdictSignal) => {
-      if (verdict) return;
-      verdict = v;
-      context.events.emit({
-        type: "governor_verdict",
-        phase: "exit",
-        interceptor: this.name,
-        ...v,
-      });
-    };
-    const exitTools = createGovernorExitTools(
-      dispatch,
-      this.hasFalseCompletions ? falseCompletionBlocks(() => this.state) : NO_BLOCKS,
-      onVerdict
-    );
-
-    const { decided: finalVerdict } = await this.forks.run({
+    const request = {
+      forks: this.forks,
       context,
       conversation,
-      promptFile: "exit.md",
-      tools: exitTools,
-      decision: () => verdict,
-      nudge:
-        "Please call resolve_intent({ id }) for satisfied intents, then call finish({ approved: boolean }).",
-      phase: "exit",
-    });
-
-    if (finalVerdict.approved) {
-      return { allowFinish: true };
-    }
-    return {
-      allowFinish: false,
-      feedback:
-        buildFalseCompletionFeedback(this.state) ??
-        "Agent work was rejected." + buildRejectionContext(this.state),
+      dispatch: this.dispatcher(context, "exit"),
+      getState: () => this.state,
     };
+    const outcome = this.hasAssumptions
+      ? await runAssumptionExit(request)
+      : toOutcome(await runDecide(request, conversation));
+    context.events.emit({ type: "governor_verdict", phase: "exit", interceptor: this.name, ...outcome });
+    return { allowFinish: outcome.approved, feedback: outcome.feedback };
   }
 }

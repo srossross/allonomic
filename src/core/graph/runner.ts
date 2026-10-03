@@ -1,10 +1,13 @@
 import { GraphRecursionError, MemorySaver } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
+import { turnPromptMessage } from "./userPrompt";
 import { createAgentTools } from "../tools";
 import { logConversation } from "../telemetry/logger";
 import { generateSessionId } from "../telemetry/session";
-import { failTurn, persistCompletedTurn } from "./turnPersistence";
+import { failTurn } from "./turnPersistence";
+import { turnDirFor } from "../turn/turnFiles";
+import { loadWorkerMessages } from "../session/rehydration";
 import type {
   AgentRunnerOptions,
   RunOptions,
@@ -23,13 +26,16 @@ import { extractFinalResponse } from "./thinking";
 import { createCompiledWorkflow, workerConversation, type CompiledWorkflow } from "./workflow";
 import { createGeminiModel } from "./geminiModel";
 import { closeUnansweredToolCalls, messageCount, rehydrateHistory } from "./threadState";
-import type { ContextFile, RecoverableCall, TurnEvent, TurnEventListener } from "../turn/events";
+import type { ContextFile, RecoverableCall, TurnEventListener } from "../turn/events";
+import { SettingsRecorder } from "./settingsRecorder";
+import { beginTurn } from "./turnStart";
 import { PromptBroker } from "./promptBroker";
 import { emitToolResults, recoverToolCalls } from "./recovery";
 import { SessionWriter } from "./sessionWriter";
 import { WarningRelay } from "./warningRelay";
 import { StopError } from "./stopError";
 import { TurnControls } from "./turnControl";
+import { createSessionProcesses, type SessionProcesses } from "../jobs/sessionProcesses";
 
 export type * from "./runnerTypes";
 import { countRetries, createTurnEventLog } from "../turn/eventLog";
@@ -51,6 +57,8 @@ export class AgentRunner {
   private writer: SessionWriter;
   private log: Logger;
   private warnings = new WarningRelay();
+  private loadHistory: (beforeTurn: number) => Promise<BaseMessage[]>;
+  private settings: SettingsRecorder;
   public workspaceDir: string;
   public interceptors: AgentInterceptor[];
   public sessionId: string;
@@ -62,6 +70,7 @@ export class AgentRunner {
   public executionMode: ExecutionModeSource;
   public compiled!: CompiledWorkflow;
   public controls = new TurnControls();
+  public processes: SessionProcesses;
 
   constructor(options: AgentRunnerOptions) {
     this.runtime = options.runtime;
@@ -75,7 +84,11 @@ export class AgentRunner {
     this.enabledTools = options.enabledTools;
     this.thinkingBudget = options.thinkingBudget ?? 1024;
     this.executionMode = options.executionMode ?? "write";
+    this.loadHistory =
+      options.loadHistory ??
+      ((beforeTurn) => loadWorkerMessages(this.runtime.fs, this.getSessionDir(), beforeTurn));
     this.log = createLogger("pipeline/runner").child({ sessionId: this.sessionId });
+    this.settings = new SettingsRecorder(this.runtime, this.workspaceDir, this.sessionId);
     this.writer = new SessionWriter(
       this.runtime.fs,
       () => this.getSessionDir(),
@@ -84,6 +97,7 @@ export class AgentRunner {
     const startupWarnings = options.startupWarnings ?? [];
     for (const { source, error } of startupWarnings) this.warnings.warn(source, error);
     registerSessionSink(this.sessionId, (record) => this.writer.appendLog(record));
+    this.processes = createSessionProcesses(this.runtime, this);
 
     if (options.createModel) {
       this.createModel = options.createModel;
@@ -100,6 +114,7 @@ export class AgentRunner {
   private selectTools() {
     const tools = createAgentTools(this.runtime, this.workspaceDir, this.executionMode, {
       sessionId: this.sessionId,
+      ...this.processes,
     });
     return this.enabledTools ? tools.filter((t) => this.enabledTools!.includes(t.name)) : tools;
   }
@@ -131,15 +146,10 @@ export class AgentRunner {
     else options.signal?.addEventListener("abort", onAbort, { once: true });
 
     const turnIndex = this.turnIndex;
-    const persisted: TurnEvent[] = [];
-    const listeners: TurnEventListener[] = [
-      (event) => {
-        persisted.push(event);
-        this.writer.record(turnIndex, event, persisted);
-      },
-    ];
-    if (options.onEvent) listeners.unshift(options.onEvent);
-    const { sink, events } = createTurnEventLog(turnIndex, listeners);
+    const listeners: TurnEventListener[] = options.onEvent ? [options.onEvent] : [];
+    const { sink, events, closeOpenScopes } = createTurnEventLog(turnIndex, listeners, (segment) =>
+      this.writer.commit(turnIndex, segment)
+    );
     const context: PipelineContext = {
       workspaceDir: this.workspaceDir,
       threadId,
@@ -148,26 +158,20 @@ export class AgentRunner {
       events: sink,
       askUser: this.prompts.createAskUser(sink, controller.signal),
       control: this.controls.start(threadId),
+      recordSettings: this.settings.inUserScope(sink),
     };
     let startCount = 0;
-    const turnRecord = () => ({ turnIndex, prompt, startCount, events, sink });
+    const turnRecord = () => ({ turnIndex, prompt, startCount, events, sink, closeOpenScopes });
 
     try {
-      sink.emit({ type: "turn_started", threadId, prompt });
-      if (this.contextFiles.length > 0)
-        sink.emit({
-          type: "context_files_loaded",
-          agent: "worker",
-          hook: "session",
-          files: this.contextFiles,
-        });
+      await beginTurn(sink, this.settings, { threadId, prompt, contextFiles: this.contextFiles });
       this.warnings.attach(sink);
-      await rehydrateHistory(this.compiled, threadId, options.history, this.log);
+      await rehydrateHistory(this.compiled, threadId, () => this.loadHistory(turnIndex), this.log);
       await prepare(context);
       startCount = await messageCount(this.compiled, threadId);
 
       const finalResult: { messages: BaseMessage[] } = await this.compiled.invoke(
-        prompt === null ? null : { messages: [new HumanMessage(prompt)] },
+        prompt === null ? null : { messages: [turnPromptMessage(prompt)] },
         {
           configurable: { thread_id: threadId, context },
           signal: controller.signal,
@@ -176,8 +180,8 @@ export class AgentRunner {
       );
       if (controller.signal.aborted) throw new StopError();
 
-      const { response, thinking } = extractFinalResponse(finalResult.messages, startCount);
-      return await this.completeTurn(finalResult.messages, response, thinking, turnRecord());
+      const { response } = extractFinalResponse(finalResult.messages, startCount);
+      return await this.completeTurn(finalResult.messages, response, turnRecord());
     } catch (error) {
       if (error instanceof GraphRecursionError && !controller.signal.aborted) {
         const closed = await closeUnansweredToolCalls(
@@ -189,12 +193,12 @@ export class AgentRunner {
         this.log.warn({ threadId, turnIndex, closedToolCalls: closed.length }, "run:stepLimit");
         const state = await this.compiled.getState({ configurable: { thread_id: threadId } });
         const messages = state.values.messages ?? [];
-        return await this.completeTurn(messages, STEP_LIMIT_MESSAGE, "", turnRecord());
+        return await this.completeTurn(messages, STEP_LIMIT_MESSAGE, turnRecord());
       }
+      closeOpenScopes();
       const { failure, isSaved } = await failTurn(error, {
         log: this.log,
-        fs: this.runtime.fs,
-        sessionDir: this.getSessionDir(),
+        flush: () => this.writer.flush(),
         compiled: this.compiled,
         threadId,
         sink,
@@ -216,25 +220,17 @@ export class AgentRunner {
   private async completeTurn(
     messages: BaseMessage[],
     response: string,
-    thinking: string,
     turn: TurnRecord
   ): Promise<TurnResult> {
-    const { sink, ...record } = turn;
+    const { sink, closeOpenScopes, ...record } = turn;
+    closeOpenScopes();
     await this.writer.flush();
     sink.emit({
       type: "turn_completed",
       retries: countRetries(record.events),
       finalResponse: response,
     });
-
-    const turnDir = await persistCompletedTurn(
-      this.runtime.fs,
-      this.getSessionDir(),
-      messages,
-      response,
-      thinking,
-      record
-    );
+    await this.writer.flush();
     this.turnIndex++;
     let logPath: string | undefined;
     try {
@@ -249,7 +245,7 @@ export class AgentRunner {
       finalResponse: response,
       turnIndex: record.turnIndex,
       sessionId: this.sessionId,
-      turnDir,
+      turnDir: turnDirFor(this.getSessionDir(), record.turnIndex),
       logPath,
     };
   }

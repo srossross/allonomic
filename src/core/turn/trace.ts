@@ -52,8 +52,8 @@ export function formatTraceLine(event: TurnEvent): string {
       });
       return [`[GOVERNOR_FORK] ${event.interceptor} ${event.pass}`, ...steps].join("\n");
     }
-    case "governor_inspect": {
-      return `[INTERCEPTOR] ${event.interceptor} exit inspect ${event.tool} ${JSON.stringify(event.args)}`;
+    case "interceptor_passed": {
+      return `[INTERCEPTOR] ${event.interceptor} ${event.phase} passed (${event.durationMs}ms)`;
     }
     case "governor_tool_decision": {
       return `[INTERCEPTOR] ${event.interceptor} pre-tool ${event.approved ? "approved" : "blocked"} ${event.tool}${event.reason ? `: ${event.reason}` : ""}`;
@@ -62,8 +62,14 @@ export function formatTraceLine(event: TurnEvent): string {
       const files = event.files.map((file) => `${file.path}${file.missing ? " (missing)" : ""}`);
       return `[CONTEXT_FILES] ${event.agent} ${event.hook}: ${files.join(", ")}`;
     }
+    case "presentation": {
+      return `[PRESENTATION] ${event.interceptor}: ${clip(event.presentation.response.replaceAll("\n", " "))}`;
+    }
     case "exit_retry": {
       return `[EXIT_RETRY] ${clip(event.feedback, 200)}`;
+    }
+    case "settings_changed": {
+      return `[SETTINGS] ${clip(JSON.stringify(event.changes), 200)}`;
     }
     case "waiting": {
       return `[WAITING] ${event.on}`;

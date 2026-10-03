@@ -5,8 +5,13 @@ import type {
   HttpResponse,
   Paths,
   Runtime,
+  KillSignal,
   Shell,
+  ShellOptions,
+  ShellProcess,
   ShellResult,
+  ShellStream,
+  SpawnOptions,
 } from "@/core/ports";
 import { dirname, basename, join } from "@/core/paths";
 
@@ -65,18 +70,64 @@ export class MemoryFileStore implements FileStore {
 }
 
 export class ScriptedShell implements Shell {
-  readonly calls: Array<{ program: string; args: string[] }> = [];
+  readonly calls: Array<{ program: string; args: string[]; options?: ShellOptions }> = [];
+  readonly spawned: Array<{ program: string; args: string[]; process: ScriptedProcess }> = [];
   constructor(
-    private readonly handler: (program: string, args: string[]) => ShellResult = () => ({
+    private readonly handler: (
+      program: string,
+      args: string[],
+      options?: ShellOptions
+    ) => ShellResult | Promise<ShellResult> = () => ({
       code: 0,
       stdout: "",
       stderr: "",
-    })
+    }),
+    private readonly isReplayingSpawns = true
   ) {}
 
-  async execute(program: string, args: string[]): Promise<ShellResult> {
-    this.calls.push({ program, args });
-    return this.handler(program, args);
+  private async replay(child: ScriptedProcess, program: string, args: string[], cwd?: string) {
+    const { code, stdout, stderr } = await this.handler(program, args, { cwd });
+    if (stdout) child.emit("stdout", stdout);
+    if (stderr) child.emit("stderr", stderr);
+    child.exit(code);
+  }
+
+  async execute(program: string, args: string[], options?: ShellOptions): Promise<ShellResult> {
+    this.calls.push({ program, args, options });
+    return this.handler(program, args, options);
+  }
+
+  async spawn(program: string, args: string[], options: SpawnOptions): Promise<ShellProcess> {
+    const child = new ScriptedProcess(options);
+    this.calls.push({ program, args, options: { cwd: options.cwd } });
+    this.spawned.push({ program, args, process: child });
+    if (this.isReplayingSpawns) void this.replay(child, program, args, options.cwd);
+    return child;
+  }
+}
+
+export class ScriptedProcess implements ShellProcess {
+  private finish: (code: number | null) => void = () => {};
+  readonly signals: KillSignal[] = [];
+  readonly exited: Promise<number | null>;
+
+  constructor(private readonly options: SpawnOptions) {
+    this.exited = new Promise((resolve) => {
+      this.finish = resolve;
+    });
+  }
+
+  emit(stream: ShellStream, text: string) {
+    this.options.onOutput(stream, text);
+  }
+
+  exit(code: number | null) {
+    this.finish(code);
+  }
+
+  async kill(signal: KillSignal): Promise<void> {
+    this.signals.push(signal);
+    this.finish(null);
   }
 }
 

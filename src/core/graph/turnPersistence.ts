@@ -1,7 +1,5 @@
 import type { BaseMessage } from "@langchain/core/messages";
-import { saveTurn, saveTurnError } from "../telemetry/session";
 import type { Logger } from "../log";
-import type { FileStore } from "../ports";
 import type { TurnEvent, TurnEventSink } from "../turn/events";
 import type { CompiledWorkflow } from "./workflow";
 import { closeUnansweredToolCalls } from "./threadState";
@@ -16,8 +14,7 @@ export interface TurnRecord {
 
 export interface FailedTurn {
   log: Logger;
-  fs: FileStore;
-  sessionDir: string;
+  flush: () => Promise<void>;
   compiled: CompiledWorkflow;
   threadId: string;
   sink: TurnEventSink;
@@ -27,24 +24,6 @@ export interface FailedTurn {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-export function persistCompletedTurn(
-  fs: FileStore,
-  sessionDir: string,
-  messages: BaseMessage[],
-  response: string,
-  thinking: string,
-  turn: TurnRecord
-): Promise<string> {
-  return saveTurn(fs, sessionDir, {
-    turnIndex: turn.turnIndex,
-    userPrompt: turn.prompt ?? "",
-    agentResponse: response,
-    thinking: thinking || undefined,
-    agentMessages: messages.slice(turn.startCount),
-    events: turn.events,
-  });
 }
 
 async function collectFailures(steps: Array<() => unknown>): Promise<unknown[]> {
@@ -68,7 +47,7 @@ function withSecondaryFailures(error: unknown, secondary: unknown[]): unknown {
 }
 
 async function persistFailedTurn(error: unknown, turn: FailedTurn): Promise<void> {
-  const { log, fs, sessionDir, compiled, threadId, record } = turn;
+  const { log, flush, compiled, threadId, record } = turn;
   const failedState = await compiled.getState({ configurable: { thread_id: threadId } });
   const allMessages: BaseMessage[] = failedState?.values?.messages ?? [];
   log.error(
@@ -81,13 +60,7 @@ async function persistFailedTurn(error: unknown, turn: FailedTurn): Promise<void
     },
     "run:failed"
   );
-  await saveTurnError(fs, sessionDir, {
-    turnIndex: record.turnIndex,
-    userPrompt: record.prompt ?? "",
-    error,
-    agentMessages: allMessages.slice(record.startCount),
-    events: record.events,
-  });
+  await flush();
 }
 
 export async function failTurn(

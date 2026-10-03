@@ -1,15 +1,15 @@
 import { loadWorkerPrompt } from "./worker";
 import { toContextFiles } from "../core/contextFiles";
 import { tauriRuntime } from "../adapters/tauri/runtime";
-import { join } from "../core/paths";
 import { AgentRunner } from "../core/graph/runner";
 import { GovernorInterceptor } from "../core/governor/interceptor";
 import { ToolTeacherInterceptor } from "../core/teacher/interceptor";
+import { UiInterceptor } from "../core/ui/interceptor";
 import { describeInterceptor } from "../core/graph/interceptorHooks";
 import type { InterceptorInfo } from "../core/graph/types";
 import type { QueuedPrompt } from "../core/graph/turnControl";
-import { resumeFromDir } from "../core/telemetry/sessionReplay";
-import { loadSessionMetadata, saveSessionMetadata } from "../core/session/metadata";
+import { replayGovernorState, replaySession } from "../core/session/rehydration";
+import { loadSessionMetadata, saveSessionMetadata, sessionDirFor } from "../core/session/metadata";
 import { resolveSettings } from "../core/config/settings";
 import { loadModels } from "../core/models";
 import { generateChatTitle } from "../core/session/title";
@@ -22,13 +22,14 @@ import {
 } from "../types";
 import type { RecoverableCall, TurnEventListener } from "../core/turn/events";
 import { createLogger } from "../core/log";
-import type { HistoryEntry } from "../core/history";
+import type { JobListener } from "../core/jobs/backgroundJobs";
 
 const serverLog = createLogger("agent/server");
 
 interface AgentInstance {
   governor: GovernorInterceptor;
   teacher: ToolTeacherInterceptor;
+  ui: UiInterceptor;
   runner: AgentRunner;
   workspaceDir: string;
   sessionId: string;
@@ -41,13 +42,14 @@ function getSessionKey(workspaceDir: string, sessionId: string): string {
   return `${workspaceDir}:::${sessionId}`;
 }
 
-async function replaySession(workspaceDir: string, sessionId: string) {
+async function replayStoredSession(workspaceDir: string, sessionId: string) {
   try {
+    const replay = await replaySession(tauriRuntime.fs, sessionDirFor(workspaceDir, sessionId));
     return {
-      replay: await resumeFromDir(
-        tauriRuntime.fs,
-        join(workspaceDir, ".allonomic/sessions", sessionId)
-      ),
+      replay: {
+        governorState: replayGovernorState(replay.events),
+        nextTurnIndex: replay.nextTurnIndex,
+      },
     };
   } catch (error) {
     return { warnings: [{ source: "session replay (started fresh)", error }] };
@@ -80,12 +82,13 @@ async function createAgentInstance(
   effectiveWorkspace: string,
   effectiveSessionId: string
 ): Promise<AgentInstance> {
-  const { replay, warnings } = await replaySession(effectiveWorkspace, effectiveSessionId);
+  const { replay, warnings } = await replayStoredSession(effectiveWorkspace, effectiveSessionId);
   const governor = new GovernorInterceptor({
     runtime: tauriRuntime,
     initialState: replay?.governorState,
   });
   const teacher = new ToolTeacherInterceptor({ runtime: tauriRuntime });
+  const ui = new UiInterceptor({ runtime: tauriRuntime, intents: governor });
   const workerPrompt = await loadWorkerPrompt(tauriRuntime, effectiveWorkspace);
   const runner = new AgentRunner({
     runtime: tauriRuntime,
@@ -94,7 +97,7 @@ async function createAgentInstance(
     workspaceDir: effectiveWorkspace,
     sessionId: effectiveSessionId,
     initialTurnIndex: replay?.nextTurnIndex ?? 1,
-    interceptors: [teacher, governor],
+    interceptors: [teacher, governor, ui],
     startupWarnings: warnings,
     executionMode: async () => {
       const settings = await resolveSettings(tauriRuntime, effectiveWorkspace, effectiveSessionId);
@@ -105,6 +108,7 @@ async function createAgentInstance(
   return {
     governor,
     teacher,
+    ui,
     runner,
     workspaceDir: effectiveWorkspace,
     sessionId: effectiveSessionId,
@@ -114,7 +118,6 @@ async function createAgentInstance(
 export interface AgentCallOptions {
   sessionId: string;
   workspaceDir?: string;
-  history?: HistoryEntry[];
   signal?: AbortSignal;
   onEvent?: TurnEventListener;
 }
@@ -126,7 +129,7 @@ export interface AgentTurnSummary {
 
 async function prepareInstance(options: AgentCallOptions): Promise<AgentInstance> {
   const instance = await getAgentInstance(options.workspaceDir, options.sessionId);
-  const { runner, governor, teacher } = instance;
+  const { runner, governor, teacher, ui } = instance;
   const settings = await resolveSettings(tauriRuntime, instance.workspaceDir, instance.sessionId);
   runner.setEnabledTools(settings.enabledTools);
   const models = await loadModels(tauriRuntime, instance.workspaceDir);
@@ -138,13 +141,14 @@ async function prepareInstance(options: AgentCallOptions): Promise<AgentInstance
     settings.model,
     supportedBudget(settings.model, settings.thinkingLevel)
   );
-  for (const interceptor of [governor, teacher]) {
+  for (const interceptor of [governor, teacher, ui]) {
     const { model = settings.model, thinkingLevel } = settings.interceptors[interceptor.name] ?? {};
     interceptor.setModel(model, supportedBudget(model, thinkingLevel));
   }
-  governor.setHasFalseCompletions(settings.governorMode === "full");
+  governor.setHasAssumptions(settings.governorMode === "full");
   governor.setIsEnabled(settings.governorMode !== "off");
   teacher.setIsEnabled(settings.teacherEnabled);
+  ui.setIsEnabled(settings.uiEnabled);
   return instance;
 }
 
@@ -185,7 +189,6 @@ export async function runAgentPrompt(
 ): Promise<AgentTurnSummary> {
   const instance = await prepareInstance(options);
   const { turnIndex } = await instance.runner.run(prompt, threadId, {
-    history: options.history,
     signal: options.signal,
     onEvent: options.onEvent,
   });
@@ -224,7 +227,6 @@ export async function recoverAgentSession(
     .child({ sessionId: instance.sessionId })
     .info({ threadId, calls: calls.length }, "recover:start");
   const { turnIndex } = await instance.runner.recover(threadId, calls, {
-    history: options.history,
     signal: options.signal,
     onEvent: options.onEvent,
   });
@@ -249,6 +251,39 @@ export async function stopAgentPrompt(threadId: string, sessionId?: string) {
     if (instance.runner.abort(threadId)) isStopped = true;
   }
   return isStopped;
+}
+
+export async function subscribeJobs(
+  workspaceDir: string | undefined,
+  sessionId: string,
+  listener: JobListener
+) {
+  const { runner } = await getAgentInstance(workspaceDir, sessionId);
+  await runner.processes.jobs.restore();
+  const unsubscribe = runner.processes.jobs.subscribe(listener);
+  return { snapshot: runner.processes.jobs.snapshot(), unsubscribe };
+}
+
+export async function jobsFor(workspaceDir: string | undefined, sessionId: string) {
+  const { runner } = await getAgentInstance(workspaceDir, sessionId);
+  return runner.processes.jobs;
+}
+
+export async function killSessionJobs(sessionId: string): Promise<void> {
+  await Promise.all(
+    runnersFor(sessionId).map(async ({ processes: { jobs } }) => {
+      await jobs.killAll();
+      await jobs.dismissInterrupted();
+    })
+  );
+}
+
+export function didBackgroundToolCall(sessionId: string, toolCallId: string): boolean {
+  return runnersFor(sessionId).some((runner) => runner.processes.stops.background(toolCallId));
+}
+
+export function didStopToolCall(sessionId: string, toolCallId: string): boolean {
+  return runnersFor(sessionId).some((runner) => runner.processes.stops.stop(toolCallId));
 }
 
 function runnersFor(sessionId: string): AgentRunner[] {

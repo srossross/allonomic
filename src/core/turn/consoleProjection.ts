@@ -19,6 +19,8 @@ interface Row {
   details?: unknown;
 }
 
+const SETTINGS_ROW = { type: "user_prompt", badge: "SETTINGS", badgeVariant: "sky" } as const;
+
 function actionSummary(action: GovernorAction): string {
   switch (action.type) {
     case "push_intent": {
@@ -27,20 +29,23 @@ function actionSummary(action: GovernorAction): string {
     case "update_intent": {
       return `update_intent: '${action.id}'${action.kind ? ` (${action.kind})` : ""}${action.description ? ` "${action.description}"` : ""}`;
     }
-    case "add_false_completion": {
-      return `add_false_completion: "${action.falseCompletion.summary}" → '${action.falseCompletion.intent_id}'`;
+    case "record_assumption": {
+      return `record_assumption: [${action.assumption.status}] "${action.assumption.text}" → '${action.assumption.intent_id}'`;
     }
-    case "no_false_completions": {
-      return `no_false_completions: '${action.intent_id}' — ${action.reason}`;
+    case "clear_assumptions": {
+      return "clear_assumptions";
     }
-    case "resolve_false_completion": {
-      return `resolve_false_completion: '${action.id}' ${action.resolution}${action.reason ? ` — ${action.reason}` : ""}`;
+    case "resolve_assumption": {
+      return `resolve_assumption: '${action.id}' — ${action.evidence}`;
     }
     case "pop_intent": {
       return `pop_intent: ${action.id ?? "top"}`;
     }
     case "resolve_intent": {
       return `resolve_intent: satisfied '${action.id}'`;
+    }
+    case "begin_prompt": {
+      return "begin_prompt";
     }
   }
 }
@@ -124,17 +129,6 @@ function rows(event: TurnEvent): Row[] {
             ]
           : []
       );
-    }
-    case "governor_inspect": {
-      return [
-        {
-          type: "governor_exit",
-          badge: gov(event.interceptor),
-          badgeVariant: "purple",
-          summary: `${event.tool}: ${JSON.stringify(event.args)}`,
-          details: event,
-        },
-      ];
     }
     case "governor_tool_decision": {
       return [
@@ -225,7 +219,9 @@ function rows(event: TurnEvent): Row[] {
           details: event,
         }));
     }
-    case "waiting": {
+    case "waiting":
+    case "presentation":
+    case "interceptor_passed": {
       return [];
     }
     case "paused": {
@@ -255,6 +251,9 @@ function rows(event: TurnEvent): Row[] {
           details: event,
         },
       ];
+    }
+    case "settings_changed": {
+      return [{ ...SETTINGS_ROW, summary: Object.keys(event.changes).join(", "), details: event }];
     }
     case "warning": {
       const summary = `${event.source}: ${event.message}`;

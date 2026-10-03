@@ -9,6 +9,7 @@ export function settingsToTab(settings: Settings): Partial<TabData> {
     hasNetworkAccess: settings.networkAccess,
     governorMode: settings.governorMode,
     teacherEnabled: settings.teacherEnabled,
+    collapseWorkerText: settings.collapseWorkerText,
     enabledTools: settings.enabledTools,
     interceptorSettings: settings.interceptors,
   };

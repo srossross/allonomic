@@ -102,7 +102,6 @@ describe("inbox node", () => {
       name: "Recorder",
       onUserPrompt: async (conversation) => {
         seen.push(String(conversation.at(-1)?.content));
-        return "";
       },
     };
     const { model, control, events, invoke } = build([LIST, "done"], [recorder]);

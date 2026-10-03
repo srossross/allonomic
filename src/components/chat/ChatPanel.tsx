@@ -14,6 +14,9 @@ import {
 } from "@/types";
 import { ContextView } from "./ContextView";
 import { ChatMessageItem } from "./ChatMessageItem";
+import { streamRowCount } from "./streamRows";
+import type { ToolControls } from "./ToolCallRows";
+import { PresentationView } from "./PresentationView";
 import { groupExploreRuns } from "./exploreGroups";
 import { ChatComposer } from "./ChatComposer";
 import type { ComposerPhase } from "./composerPhase";
@@ -21,6 +24,14 @@ import { useFollowScroll } from "./useFollowScroll";
 import { findPendingPrompt } from "./pendingPrompt";
 import type { QueuedPrompt } from "@/core/graph/turnControl";
 import { toggleInSet } from "@/lib/toggleInSet";
+
+function turnOf(messages: Message[], presentation: Message): Message[] {
+  const end = messages.indexOf(presentation);
+  const start = messages.findLastIndex(
+    (m, index) => index < end && m.role === "user" && !m.brief && !m.isQueued
+  );
+  return messages.slice(start + 1, end);
+}
 
 export interface ChatPanelProps {
   sessionId: string;
@@ -33,6 +44,7 @@ export interface ChatPanelProps {
   waitingOn?: string;
   onSendMessage: (text: string) => void;
   onStopMessage?: () => void;
+  toolControls?: ToolControls;
   onPause?: () => void;
   onResume?: (text: string) => void;
   onRemoveQueued?: (id: string) => boolean;
@@ -54,6 +66,8 @@ export interface ChatPanelProps {
   isTeacherEnabled?: boolean;
   onToggleTeacher?: () => void;
   onRespondToPrompt?: (promptId: string, value: UserPromptValue) => void;
+  collapseWorkerText?: boolean;
+  openIntents?: string[];
 }
 
 export function ChatPanel({
@@ -67,6 +81,7 @@ export function ChatPanel({
   waitingOn,
   onSendMessage,
   onStopMessage,
+  toolControls,
   onPause,
   onResume,
   onRemoveQueued,
@@ -88,6 +103,8 @@ export function ChatPanel({
   isTeacherEnabled = true,
   onToggleTeacher,
   onRespondToPrompt,
+  collapseWorkerText = true,
+  openIntents = [],
 }: ChatPanelProps) {
   const [expandedThoughtIds, setExpandedThoughtIds] = useState<Set<string>>(new Set());
   const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(new Set());
@@ -112,6 +129,14 @@ export function ChatPanel({
   const { scrollRef, contentRef, sentinelRef, isFollowing, hasUnseen, scrollToBottom } =
     useFollowScroll(sessionId, messages);
 
+  const streamItems = groupExploreRuns(messages);
+  const rowOffsets: number[] = [];
+  let rowCount = 0;
+  for (const { message, toolItems } of streamItems) {
+    rowOffsets.push(rowCount);
+    rowCount += streamRowCount(message, toolItems, collapseWorkerText);
+  }
+
   return (
     <div className="bg-background relative flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3">
@@ -123,22 +148,40 @@ export function ChatPanel({
               No messages yet. Send a prompt to run the governed agent loop.
             </div>
           ) : (
-            groupExploreRuns(messages).map(({ message, toolItems }) => (
-              <ChatMessageItem
-                key={message.id}
-                message={message}
-                toolItems={toolItems}
-                isThoughtExpanded={expandedThoughtIds.has(message.id)}
-                onToggleThought={() => toggleThought(message.id)}
-                expandedToolIds={expandedToolIds}
-                onToggleTool={toggleToolCall}
-                onRetry={
-                  onRetry && !loading && message.isError && message === messages.at(-1)
-                    ? onRetry
-                    : undefined
-                }
-              />
-            ))
+            <div className="space-y-1">
+              {streamItems.map(({ message, toolItems }, index) => (
+                <ChatMessageItem
+                  key={message.id}
+                  rowOffset={rowOffsets[index]}
+                  message={message}
+                  toolItems={toolItems}
+                  isThoughtExpanded={expandedThoughtIds.has(message.id)}
+                  onToggleThought={() => toggleThought(message.id)}
+                  isTextCollapsed={collapseWorkerText}
+                  isTextExpanded={expandedThoughtIds.has(`${message.id}:text`)}
+                  onToggleText={() => toggleThought(`${message.id}:text`)}
+                  presentation={
+                    message.presentation && (
+                      <PresentationView
+                        presentation={message.presentation}
+                        turn={turnOf(messages, message)}
+                        openIntents={openIntents}
+                        isActive={!loading && message === messages.at(-1)}
+                        onSend={onSendMessage}
+                      />
+                    )
+                  }
+                  expandedToolIds={expandedToolIds}
+                  onToggleTool={toggleToolCall}
+                  toolControls={toolControls}
+                  onRetry={
+                    onRetry && !loading && message.isError && message === messages.at(-1)
+                      ? onRetry
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
           )}
 
           {loading && !pendingPrompt && (

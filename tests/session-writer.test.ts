@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { MemoryFileStore, createMemoryRuntime } from "../src/adapters/memory/runtime";
 import { AgentRunner } from "../src/core/graph/runner";
+import { SESSION_LOG_FILE } from "../src/core/graph/sessionWriter";
 import { readContextFile } from "../src/core/contextFiles";
 import { loadSessionMetadata } from "../src/core/session/metadata";
 import type { TurnEvent } from "../src/core/turn/events";
@@ -34,9 +35,9 @@ function runnerWith(fs: MemoryFileStore) {
 }
 
 describe("session writes", () => {
-  it("fails the turn when events.yml cannot be written", async () => {
+  it("fails the turn when a turn segment cannot be written", async () => {
     const events: TurnEvent[] = [];
-    const run = runnerWith(new FailingStore("events.yml")).run("hi", "t1", {
+    const run = runnerWith(new FailingStore("-worker.jsonl")).run("hi", "t1", {
       onEvent: (event) => {
         events.push(event);
       },
@@ -46,9 +47,9 @@ describe("session writes", () => {
     expect(events.map((e) => e.type)).not.toContain("turn_completed");
   });
 
-  it("warns once and completes the turn when trace.log cannot be written", async () => {
+  it("warns once and completes the turn when the app log cannot be written", async () => {
     const events: TurnEvent[] = [];
-    const result = await runnerWith(new FailingStore("trace.log")).run("hi", "t1", {
+    const result = await runnerWith(new FailingStore("app.log")).run("hi", "t1", {
       onEvent: (event) => {
         events.push(event);
       },
@@ -56,7 +57,7 @@ describe("session writes", () => {
     expect(result.finalResponse).toBe("done");
     const warnings = events.filter((e) => e.type === "warning");
     expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toMatchObject({ source: "trace.log" });
+    expect(warnings[0]).toMatchObject({ source: SESSION_LOG_FILE });
   });
 });
 

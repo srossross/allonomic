@@ -3,6 +3,7 @@ import type { AgentFileRow, ConsoleEvent } from "./inspector";
 import type { GovernorState } from "./tab";
 import type { RecoverableCall } from "../core/turn/events";
 import type { Profile } from "../core/turn/profile";
+import type { GroupColor } from "./groupColors";
 
 export interface WorkspaceItem {
   id: string;
@@ -10,11 +11,20 @@ export interface WorkspaceItem {
   path: string;
   lastOpened?: string;
   archived?: boolean;
+  groupId?: string;
+}
+
+export interface WorkspaceGroup {
+  id: string;
+  name: string;
+  color: GroupColor;
+  collapsed?: boolean;
 }
 
 export interface WorkspacesConfig {
   activeWorkspaceId?: string;
   workspaces: WorkspaceItem[];
+  groups: WorkspaceGroup[];
 }
 
 export interface WorkspaceState {

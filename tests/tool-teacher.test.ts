@@ -15,14 +15,13 @@ import { ToolTeacherInterceptor } from "../src/core/teacher/interceptor";
 import { createCompiledWorkflow } from "../src/core/graph/workflow";
 import { recoverToolCalls } from "../src/core/graph/recovery";
 import { rehydrateSession } from "../src/core/session/rehydration";
-import { createTurnEventLog } from "../src/core/turn/eventLog";
-import { saveTurnEvents } from "../src/core/telemetry/session";
 import type { TurnEvent } from "../src/core/turn/events";
 import { messageText } from "../src/core/graph/thinking";
 import { FakeChatModel, toolCall } from "./helpers/fakeChatModel";
 import { scriptedGovernorModel } from "./helpers/governorModel";
 import { instructionsOf } from "./helpers/governorForks";
 import { recordingContext } from "./helpers/turnContext";
+import { writeTurn } from "./helpers/turnWriter";
 
 const FAILED = "[STDERR]:\nOperation not permitted\n[exit 1 in 3ms]";
 const CALL = { id: "c1", name: "shell_1_project_read_only", args: { command: "uv run pytest" } };
@@ -79,13 +78,13 @@ describe("ToolTeacher pre-tool", () => {
   });
 
   it("includes agents/tools.md and current settings when the file exists", async () => {
-    const { runtime, teacher } = await scriptedTeacher([{ name: "allow" }]);
+    const { runtime, model, teacher } = await scriptedTeacher([{ name: "allow" }]);
     await runtime.fs.writeText("/workspace/agents/tools.md", "RULE_X");
-    const { context, events } = recordingContext();
+    const { context } = recordingContext();
 
     await teacher.onPreToolCall(CALL, conversation, context);
 
-    const instructions = instructionsOf(events, "pre_tool.md");
+    const instructions = instructionsOf(model.inputs, "PRE_TOOL");
     expect(instructions).toContain("TEACHER");
     expect(instructions).toContain("PRE_TOOL");
     expect(instructions).toContain("RULE_X");
@@ -94,12 +93,12 @@ describe("ToolTeacher pre-tool", () => {
   });
 
   it("omits the project rules section when agents/tools.md is absent", async () => {
-    const { teacher } = await scriptedTeacher([{ name: "allow" }]);
-    const { context, events } = recordingContext();
+    const { model, teacher } = await scriptedTeacher([{ name: "allow" }]);
+    const { context } = recordingContext();
 
     await teacher.onPreToolCall(CALL, conversation, context);
 
-    expect(instructionsOf(events, "pre_tool.md")).not.toContain("Project Rules");
+    expect(instructionsOf(model.inputs, "PRE_TOOL")).not.toContain("Project Rules");
   });
 
   it("records the files it loaded, flagging missing user and project agents/tools.md", async () => {
@@ -199,18 +198,12 @@ const rerun = () => recordingContext("t1", 2, async () => "rerun");
 describe("ToolTeacher in crash recovery", () => {
   it("records which interceptors decided an unanswered call", async () => {
     const runtime = createMemoryRuntime();
-    const { sink, events } = createTurnEventLog(1, []);
-    sink.emit({ type: "turn_started", threadId: "s1", prompt: "test" });
-    sink.emit({ type: "model_step", stepId: "s", content: "", toolCalls: [CALL], durationMs: 1 });
-    sink.emit({
-      type: "governor_tool_decision",
-      interceptor: "ToolTeacher",
-      tool: CALL.name,
-      toolCallId: "c1",
-      args: CALL.args,
-      approved: true,
+    await writeTurn(runtime.fs, "/w/.allonomic/sessions/s1", 1, (sink) => {
+      sink.emit({ type: "turn_started", threadId: "s1", prompt: "test" });
+      sink.emit({ type: "model_step", stepId: "s", content: "", toolCalls: [CALL], durationMs: 1 });
+      sink.scope("ToolTeacher", { phase: "pre_tool", toolCallId: "c1" }).close({ collapse: true });
+      sink.scope("Gate", { phase: "pre_tool" }).close({ collapse: true });
     });
-    await saveTurnEvents(runtime.fs, "/w/.allonomic/sessions/s1", 1, events);
 
     const session = await rehydrateSession(runtime.fs, "/w", "s1");
 

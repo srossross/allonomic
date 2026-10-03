@@ -1,15 +1,6 @@
-import {
-  HumanMessage,
-  AIMessage,
-  isAIMessage,
-  SystemMessage,
-  ToolMessage,
-  type BaseMessage,
-} from "@langchain/core/messages";
+import { isAIMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { createLogger, type Logger } from "../log";
-import type { HistoryEntry } from "../history";
 import type { CompiledWorkflow } from "./workflow";
-import { thoughtSignatureKwargs } from "./thinking";
 
 const defaultLog = createLogger("pipeline/threadState");
 
@@ -38,43 +29,23 @@ export async function closeUnansweredToolCalls(
   return closers;
 }
 
-export function historyToMessages(history: HistoryEntry[]): BaseMessage[] {
-  return history.map((h) => {
-    const content = h.content ?? "";
-    if (h.role === "user" || h.role === "human") return new HumanMessage(content);
-    if (h.role === "system") return new SystemMessage(content);
-    return h.role === "tool"
-      ? new ToolMessage({
-          content,
-          tool_call_id: h.tool_call_id ?? "unknown",
-          name: h.name ?? "unknown",
-        })
-      : new AIMessage({
-          content,
-          tool_calls: h.tool_calls,
-          additional_kwargs: h.tool_calls ? thoughtSignatureKwargs(h.tool_calls) : {},
-        });
-  });
-}
-
 export async function rehydrateHistory(
   compiled: CompiledWorkflow,
   threadId: string,
-  history?: HistoryEntry[],
+  loadHistory: () => Promise<BaseMessage[]>,
   log: Logger = defaultLog
 ): Promise<void> {
-  if (!history || history.length === 0) {
-    log.debug({ threadId }, "rehydrateHistory:skip:emptyHistory");
-    return;
-  }
   const existing = await messageCount(compiled, threadId);
   if (existing > 0) {
     log.debug({ threadId, messageCount: existing }, "rehydrateHistory:skip:stateExists");
     return;
   }
-  log.info({ threadId, historyLength: history.length }, "rehydrateHistory:seeding");
-
-  const pastMessages = historyToMessages(history);
+  const pastMessages = await loadHistory();
+  if (pastMessages.length === 0) {
+    log.debug({ threadId }, "rehydrateHistory:skip:emptyHistory");
+    return;
+  }
+  log.info({ threadId, historyLength: pastMessages.length }, "rehydrateHistory:seeding");
   await compiled.updateState({ configurable: { thread_id: threadId } }, { messages: pastMessages });
   log.info(
     { threadId, messageCount: await messageCount(compiled, threadId) },

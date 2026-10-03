@@ -12,7 +12,8 @@ import { IntentsPanel } from "@/components/inspector/IntentsPanel";
 import { useTabsManager } from "@/hooks/useTabsManager";
 import { usePromptResponses } from "@/hooks/usePromptResponses";
 import { useProjectManager } from "@/hooks/useProjectManager";
-import { fetchModelsApi } from "@/agent/api";
+import { didBackgroundToolCallApi, didStopToolCallApi, fetchModelsApi } from "@/agent/api";
+import { SessionJobs } from "@/components/jobs/SessionJobs";
 import { withAlert } from "@/lib/alertError";
 import {
   DEFAULT_EXECUTION_MODE,
@@ -34,6 +35,11 @@ function App() {
     setActiveProjectId,
     handleRenameProject,
     handleDeleteProject,
+    groups,
+    handleCreateGroup,
+    handleUpdateGroup,
+    handleDeleteGroup,
+    handleSetProjectGroup,
     triggerDirPicker,
   } = useProjectManager(() => newTabRef.current());
 
@@ -131,6 +137,11 @@ function App() {
         onOpenDirPicker={() => void withAlert("Open folder", triggerDirPicker)}
         onRenameProject={handleRenameProject}
         onDeleteProject={handleDeleteProject}
+        groups={groups}
+        onCreateGroup={handleCreateGroup}
+        onUpdateGroup={(id, patch) => void handleUpdateGroup(id, patch)}
+        onDeleteGroup={(id) => void handleDeleteGroup(id)}
+        onSetProjectGroup={(projectId, groupId) => void handleSetProjectGroup(projectId, groupId)}
         projectStates={projectStates}
       />
 
@@ -169,39 +180,47 @@ function App() {
                 onSaved={handleSettingsSaved}
               />
             ) : (
-              <ChatPanel
-                sessionId={activeTab.id}
-                messages={activeTab.messages}
-                contextMessages={activeTab.contextMessages}
-                showContext={activeTab.showContext}
-                loading={activeTab.loading}
-                phase={composerPhase(activeTab)}
-                queuedPrompts={activeTab.queuedPrompts}
-                waitingOn={activeTab.waitingOn}
-                onSendMessage={handleSendMessage}
-                onStopMessage={() => void withAlert("Stop", handleStopMessage)}
-                onPause={handlePause}
-                onResume={handleResume}
-                onRemoveQueued={handleRemoveQueued}
-                onPopQueued={handlePopQueued}
-                onRetry={() => void withAlert("Retry", handleRetry)}
-                selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
-                onSelectModel={handleSelectModel}
-                models={models}
-                contextTokens={activeTab.contextTokens}
-                thinkingLevel={activeTab.thinkingLevel || "Low"}
-                onSelectThinkingLevel={handleSelectThinkingLevel}
-                executionMode={activeTab.executionMode || DEFAULT_EXECUTION_MODE}
-                onSelectExecutionMode={handleSelectExecutionMode}
-                onCycleExecutionMode={handleCycleExecutionMode}
-                hasNetworkAccess={activeTab.hasNetworkAccess ?? false}
-                onToggleHasNetworkAccess={handleToggleHasNetworkAccess}
-                governorMode={activeTab.governorMode ?? DEFAULT_GOVERNOR_MODE}
-                onCycleGovernorMode={handleCycleGovernorMode}
-                isTeacherEnabled={activeTab.teacherEnabled ?? true}
-                onToggleTeacher={handleToggleTeacher}
-                onRespondToPrompt={handleRespondToPrompt}
-              />
+              <SessionJobs workspaceDir={activeProject?.path} sessionId={activeTab.id}>
+                <ChatPanel
+                  sessionId={activeTab.id}
+                  messages={activeTab.messages}
+                  contextMessages={activeTab.contextMessages}
+                  showContext={activeTab.showContext}
+                  loading={activeTab.loading}
+                  phase={composerPhase(activeTab)}
+                  queuedPrompts={activeTab.queuedPrompts}
+                  waitingOn={activeTab.waitingOn}
+                  onSendMessage={handleSendMessage}
+                  onStopMessage={() => void withAlert("Stop", handleStopMessage)}
+                  toolControls={{
+                    stop: (toolCallId) => didStopToolCallApi(activeTab.id, toolCallId),
+                    background: (toolCallId) => didBackgroundToolCallApi(activeTab.id, toolCallId),
+                  }}
+                  onPause={handlePause}
+                  onResume={handleResume}
+                  onRemoveQueued={handleRemoveQueued}
+                  onPopQueued={handlePopQueued}
+                  onRetry={() => void withAlert("Retry", handleRetry)}
+                  selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
+                  onSelectModel={handleSelectModel}
+                  models={models}
+                  contextTokens={activeTab.contextTokens}
+                  thinkingLevel={activeTab.thinkingLevel || "Low"}
+                  onSelectThinkingLevel={handleSelectThinkingLevel}
+                  executionMode={activeTab.executionMode || DEFAULT_EXECUTION_MODE}
+                  onSelectExecutionMode={handleSelectExecutionMode}
+                  onCycleExecutionMode={handleCycleExecutionMode}
+                  hasNetworkAccess={activeTab.hasNetworkAccess ?? false}
+                  onToggleHasNetworkAccess={handleToggleHasNetworkAccess}
+                  governorMode={activeTab.governorMode ?? DEFAULT_GOVERNOR_MODE}
+                  onCycleGovernorMode={handleCycleGovernorMode}
+                  isTeacherEnabled={activeTab.teacherEnabled ?? true}
+                  onToggleTeacher={handleToggleTeacher}
+                  onRespondToPrompt={handleRespondToPrompt}
+                  collapseWorkerText={activeTab.collapseWorkerText ?? true}
+                  openIntents={activeTab.governorState.intent_stack.map((i) => i.description)}
+                />
+              </SessionJobs>
             )}
           </section>
 
@@ -222,7 +241,7 @@ function App() {
               profile={activeTab.profile}
               intentStack={activeTab.governorState.intent_stack}
               completedIntents={activeTab.governorState.completed_intents}
-              falseCompletions={activeTab.governorState.false_completions}
+              assumptions={activeTab.governorState.assumptions}
               consoleEvents={activeTab.consoleEvents || []}
               agentFiles={activeTab.agentFiles || []}
               onClearConsole={() => handleClearConsole(activeTab.id)}
