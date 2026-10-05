@@ -1,0 +1,2 @@
+export const INLINE_OUTPUT_LIMIT = 5000;
+export const BACKGROUND_STARTUP_MS = 1000;

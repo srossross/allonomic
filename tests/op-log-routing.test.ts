@@ -3,11 +3,16 @@ import { createMemoryRuntime } from "../src/adapters/memory/runtime";
 import { AgentRunner } from "../src/core/graph/runner";
 import type { AgentInterceptor } from "../src/core/graph/types";
 import { loadTurn, turnDirFor } from "../src/core/turn/turnFiles";
+import type { TurnEvent } from "../src/core/turn/events";
 import type { BaseMessage } from "@langchain/core/messages";
 import { updateSessionSettings } from "../src/core/config/settings";
 import { FakeChatModel, toolCall } from "./helpers/fakeChatModel";
 
 const SESSION_DIR = "/w/.allonomic/sessions/s1";
+
+function callIds(events: TurnEvent[]): string[] {
+  return events.flatMap((e) => (e.type === "model_step" ? e.toolCalls.map((c) => c.id) : []));
+}
 const READ = "shell_1_project_read_only";
 
 const governor: AgentInterceptor = {
@@ -59,7 +64,7 @@ const teacher: AgentInterceptor = {
       pass: "post_tool.md",
       messages: [],
     });
-    return call.id === "c2" ? "LESSON" : undefined;
+    return call.args.command === "pwd" ? "LESSON" : undefined;
   },
 };
 
@@ -75,7 +80,7 @@ describe("op-log routing", () => {
       createModel: () =>
         new FakeChatModel([
           { toolCalls: [toolCall(READ, { command: "ls" }, "c1")] },
-          { toolCalls: [toolCall(READ, { command: "ls" }, "c2")] },
+          { toolCalls: [toolCall(READ, { command: "pwd" }, "c2")] },
           "done",
         ]),
     });
@@ -102,10 +107,11 @@ describe("op-log routing", () => {
     const passed = events.flatMap((e) =>
       e.type === "interceptor_passed" ? [`${e.interceptor}-${e.phase}-${e.toolCallId ?? ""}`] : []
     );
+    const [c1, c2] = callIds(events);
     expect(passed).toEqual([
-      "ToolTeacher-pre_tool-c1",
-      "ToolTeacher-post_tool-c1",
-      "ToolTeacher-pre_tool-c2",
+      `ToolTeacher-pre_tool-${c1}`,
+      `ToolTeacher-post_tool-${c1}`,
+      `ToolTeacher-pre_tool-${c2}`,
       "Governor-exit-",
     ]);
     expect(events.at(-1)?.type).toBe("turn_completed");
@@ -150,7 +156,8 @@ describe("op-log routing", () => {
     const changedAt = events.findIndex(
       (e) => e.type === "settings_changed" && e.actor === "user" && e.seq > 1
     );
-    const secondResult = events.findIndex((e) => e.type === "tool_result" && e.toolCallId === "c2");
+    const c2 = callIds(events)[1];
+    const secondResult = events.findIndex((e) => e.type === "tool_result" && e.toolCallId === c2);
     expect(changedAt).toBeLessThan(secondResult);
   });
 });

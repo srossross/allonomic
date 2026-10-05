@@ -20,9 +20,23 @@ export type UserPrompt =
       options: Array<{ value: string; label: string }>;
     }
   | { kind: "text"; label: string; placeholder?: string }
-  | { kind: "assumption"; label: string; options: string[] };
+  | { kind: "assumptions"; label: string; questions: AssumptionQuestion[] };
 
-export type UserPromptValue = boolean | string;
+export interface AssumptionQuestion {
+  id: string;
+  topic: string;
+  label: string;
+  options: string[];
+}
+
+export type PromptAnswer = boolean | string;
+
+export type UserPromptValue = PromptAnswer | Record<string, PromptAnswer>;
+
+export interface PendingPrompt {
+  promptId: string;
+  prompt: UserPrompt;
+}
 
 export interface ToolCallInfo {
   id?: string;

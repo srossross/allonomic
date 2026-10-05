@@ -1,6 +1,6 @@
 import type { BaseMessage } from "@langchain/core/messages";
 import type { PipelineContext } from "../graph/types";
-import type { UserPromptValue } from "../../types/tools";
+import type { PromptAnswer } from "../../types/tools";
 import type { GovernorForkRunner } from "./forkRunner";
 import type { GovernorDispatch } from "./tools";
 import type { Assumption, GovernorState } from "./types";
@@ -10,8 +10,10 @@ import {
   createChangedAnswerTools,
   createClassifyTools,
   createDecideTools,
+  createRecordTools,
   type ExitDecision,
 } from "./assumptionTools";
+import type { PromptSection } from "./prompts";
 
 export interface AssumptionExitRequest {
   forks: GovernorForkRunner;
@@ -24,10 +26,17 @@ export interface AssumptionExitRequest {
 export interface ExitOutcome {
   approved: boolean;
   feedback?: string;
+  intentId?: string;
 }
 
 const DECIDE_NUDGE =
-  "Call resolveAssumptions / resolve_intent as needed, then atLeastOneIntentWasSatisfied() or returnToWorkerWithUnmetIntent({ why }).";
+  "Call resolveAssumptions / resolve_intent as needed, then atLeastOneIntentWasSatisfied() or returnToWorkerWithUnmetIntent({ intent_id, why }).";
+
+export function toOutcome(decided: ExitDecision): ExitOutcome {
+  if (decided.kind === "approve") return { approved: true };
+  const intentId = decided.kind === "unmet_intent" ? decided.intentId : undefined;
+  return { approved: false, feedback: decided.why, intentId };
+}
 
 function decisionSignal() {
   let decided: ExitDecision | null = null;
@@ -39,7 +48,27 @@ function decisionSignal() {
   };
 }
 
-function changedAnswersText(assumptions: Assumption[], answers: Map<string, UserPromptValue>) {
+function isUnclassified(assumption: Assumption): boolean {
+  return assumption.status === "open" && assumption.resolver === null;
+}
+
+function openAssumptionSection(assumptions: Assumption[]): PromptSection {
+  return {
+    title: "Open Assumptions",
+    body: JSON.stringify(
+      assumptions.map(({ id, intent_id, text, depends_on }) => ({
+        id,
+        intent_id,
+        text,
+        depends_on,
+      })),
+      null,
+      2
+    ),
+  };
+}
+
+function changedAnswersText(assumptions: Assumption[], answers: Map<string, PromptAnswer>) {
   return assumptions
     .flatMap((a) => {
       const answer = answers.get(a.id);
@@ -91,22 +120,46 @@ export async function runAssumptionExit(request: AssumptionExitRequest): Promise
     phase: "exit",
   });
 
-  let isClassified = false;
-  const classified = await forks.run({
+  let isRecorded = false;
+  await forks.runStandalone({
     context,
-    conversation: listed.scratchpad,
-    promptFile: "assumptions_classify.md",
-    tools: createClassifyTools(dispatch, () => {
-      isClassified = true;
+    promptFile: "assumptions_record.md",
+    vars: {
+      intents: getState()
+        .intent_stack.map((intent) => `- ${intent.id}: ${intent.description}`)
+        .join("\n"),
+      assumptions: listed.text,
+    },
+    tools: createRecordTools(dispatch, getState, () => {
+      isRecorded = true;
     }),
-    decision: () => (isClassified ? true : null),
-    nudge: "Record each assumption with record_assumption, then call finish_classify().",
+    decision: () => (isRecorded ? true : null),
+    nudge: "Record every item with record_assumption, then call finish_record().",
     phase: "exit",
   });
 
-  const toAsk = new Set(getState().assumptions.filter(shouldAskUser).map((a) => a.id));
-  const answers = new Map<string, UserPromptValue>();
-  let scratchpad = classified.scratchpad;
+  const unclassified = () => getState().assumptions.filter((a) => isUnclassified(a));
+  let scratchpad = request.conversation;
+  if (unclassified().length > 0) {
+    const classified = await forks.run({
+      context,
+      conversation: request.conversation,
+      promptFile: "assumptions_classify.md",
+      sections: [openAssumptionSection(unclassified())],
+      tools: createClassifyTools(dispatch),
+      decision: () => unclassified().length === 0 || null,
+      nudge: "Call add_to_assumption for every assumption listed under Open Assumptions.",
+      phase: "exit",
+    });
+    scratchpad = classified.scratchpad;
+  }
+
+  const toAsk = new Set(
+    getState()
+      .assumptions.filter(shouldAskUser)
+      .map((a) => a.id)
+  );
+  const answers = new Map<string, PromptAnswer>();
   if (toAsk.size > 0) {
     const asked = await forks.run({
       context,
@@ -115,7 +168,7 @@ export async function runAssumptionExit(request: AssumptionExitRequest): Promise
       appendix: `\n## Ask About\n${[...toAsk].join("\n")}`,
       tools: createAskTools(dispatch, getState, toAsk, context.askUser, answers),
       decision: () => answers.size === toAsk.size || null,
-      nudge: "Call ask_user for each assumption listed under Ask About.",
+      nudge: "Call ask_user once with every assumption listed under Ask About.",
       phase: "exit",
     });
     scratchpad = asked.scratchpad;
@@ -139,12 +192,7 @@ export async function runAssumptionExit(request: AssumptionExitRequest): Promise
   }
 
   const unchecked = getState().assumptions.filter(requiresToolCheck);
-  if (unchecked.length > 0) {
-    return { approved: false, feedback: verifiableFeedback(getState(), unchecked) };
-  }
-
-  const decided = await runDecide(request, scratchpad);
-  return decided.kind === "approve"
-    ? { approved: true }
-    : { approved: false, feedback: decided.why };
+  return unchecked.length > 0
+    ? { approved: false, feedback: verifiableFeedback(getState(), unchecked) }
+    : toOutcome(await runDecide(request, scratchpad));
 }

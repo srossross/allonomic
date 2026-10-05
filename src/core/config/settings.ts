@@ -12,6 +12,7 @@ import {
 } from "../../types/chat";
 import { AVAILABLE_TOOLS } from "../../types/tools";
 import { tightenLayer } from "./tightenLayer";
+import { patchToLayer, type SettingsPatch } from "./settingsPatch";
 import type { Runtime } from "../ports";
 import { join } from "../paths";
 import {
@@ -47,6 +48,7 @@ export const layerSchema = z.object({
   ui: z.boolean().optional(),
   collapse_worker_text: z.boolean().optional(),
   shell_timeout_seconds: z.number().positive().optional(),
+  shell_env: z.record(z.string(), z.string()).optional(),
   model: z.string().optional(),
   thinking_level: z.enum(THINKING_LEVELS).optional(),
   tools: z.record(z.string(), z.boolean()).optional(),
@@ -78,6 +80,7 @@ export interface Settings {
   uiEnabled: boolean;
   collapseWorkerText: boolean;
   shellTimeoutSeconds: number;
+  shellEnv: Record<string, string>;
   model: string;
   thinkingLevel: ThinkingLevel;
   enabledTools: string[];
@@ -85,10 +88,7 @@ export interface Settings {
   sandbox: SandboxConfig;
 }
 
-export type SettingsPatch = Partial<Omit<Settings, "enabledTools" | "interceptors" | "sandbox">> & {
-  tools?: Record<string, boolean>;
-  interceptors?: Record<string, InterceptorSettings>;
-};
+export type { SettingsPatch } from "./settingsPatch";
 
 export const DEFAULT_SETTINGS: Settings = {
   executionMode: DEFAULT_EXECUTION_MODE,
@@ -98,6 +98,7 @@ export const DEFAULT_SETTINGS: Settings = {
   uiEnabled: true,
   collapseWorkerText: true,
   shellTimeoutSeconds: 120,
+  shellEnv: {},
   model: DEFAULT_MODEL_ID,
   thinkingLevel: "Low",
   enabledTools: AVAILABLE_TOOLS.map((t) => t.name),
@@ -139,6 +140,7 @@ export function applyLayer(
     uiEnabled: layer.ui ?? settings.uiEnabled,
     collapseWorkerText: layer.collapse_worker_text ?? settings.collapseWorkerText,
     shellTimeoutSeconds: layer.shell_timeout_seconds ?? settings.shellTimeoutSeconds,
+    shellEnv: { ...settings.shellEnv, ...layer.shell_env },
     model: layer.model ?? settings.model,
     thinkingLevel: layer.thinking_level ?? settings.thinkingLevel,
     enabledTools: applyTools(settings.enabledTools, layer.tools),
@@ -266,33 +268,6 @@ export function changedSettings(
         !previous || JSON.stringify(Reflect.get(previous, key)) !== JSON.stringify(value)
     )
   );
-}
-
-function patchToLayer(patch: SettingsPatch): SettingsLayer {
-  return {
-    ...(patch.executionMode && { execution_mode: patch.executionMode }),
-    ...(patch.networkAccess !== undefined && { network_access: patch.networkAccess }),
-    ...(patch.governorMode && { governor_mode: patch.governorMode }),
-    ...(patch.teacherEnabled !== undefined && { teacher: patch.teacherEnabled }),
-    ...(patch.uiEnabled !== undefined && { ui: patch.uiEnabled }),
-    ...(patch.collapseWorkerText !== undefined && {
-      collapse_worker_text: patch.collapseWorkerText,
-    }),
-    ...(patch.shellTimeoutSeconds !== undefined && {
-      shell_timeout_seconds: patch.shellTimeoutSeconds,
-    }),
-    ...(patch.model && { model: patch.model }),
-    ...(patch.thinkingLevel && { thinking_level: patch.thinkingLevel }),
-    ...(patch.tools && { tools: patch.tools }),
-    ...(patch.interceptors && {
-      interceptors: Object.fromEntries(
-        Object.entries(patch.interceptors).map(([name, { model, thinkingLevel }]) => [
-          name,
-          { model, thinking_level: thinkingLevel },
-        ])
-      ),
-    }),
-  };
 }
 
 export async function updateSessionSettings(

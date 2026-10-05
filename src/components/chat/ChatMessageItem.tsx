@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import { Brain, MessageSquare, RotateCcw, Target } from "lucide-react";
+import { UserMessageActions } from "./UserMessageActions";
 import type { Message } from "@/types";
 import type { ToolItem } from "./exploreGroups";
+import { GovernorMarkerRow } from "./GovernorMarkerRow";
 import { StreamRow } from "./StreamRow";
 import { isCollapsedWorkerText } from "./streamRows";
 import { ExploreGroup, ToolCallRow, type ToolControls } from "./ToolCallRows";
@@ -15,6 +17,9 @@ interface ChatMessageItemProperties {
   onToggleTool: (toolId: string) => void;
   toolControls?: ToolControls;
   onRetry?: () => void;
+  onRewind?: () => void;
+  onFork?: () => void;
+  isRewindDisabled?: boolean;
   isTextCollapsed?: boolean;
   isTextExpanded?: boolean;
   onToggleText?: () => void;
@@ -31,6 +36,9 @@ export function ChatMessageItem({
   onToggleTool,
   toolControls,
   onRetry,
+  onRewind,
+  onFork,
+  isRewindDisabled = false,
   isTextCollapsed = false,
   isTextExpanded = false,
   onToggleText,
@@ -38,6 +46,7 @@ export function ChatMessageItem({
   rowOffset = 0,
 }: ChatMessageItemProperties) {
   const isWorkerText = isCollapsedWorkerText(message, isTextCollapsed);
+  const hasActions = Boolean(onRewind || onFork);
   let row = rowOffset;
   const isNextStriped = () => row++ % 2 === 1;
   return (
@@ -118,6 +127,15 @@ export function ChatMessageItem({
         </div>
       )}
 
+      {message.governor && (
+        <GovernorMarkerRow
+          marker={message.governor}
+          striped={isNextStriped()}
+          isExpanded={isThoughtExpanded}
+          onToggle={onToggleThought}
+        />
+      )}
+
       {presentation && <div className="w-full pt-2">{presentation}</div>}
 
       {Boolean(message.content) && isWorkerText && (
@@ -135,7 +153,7 @@ export function ChatMessageItem({
 
       {Boolean(message.content) && !message.brief && (!isWorkerText || isTextExpanded) && (
         <div
-          className={`w-full rounded-xs px-2.5 py-1.5 text-left text-xs leading-relaxed whitespace-pre-wrap ${
+          className={`group relative w-full rounded-xs py-1.5 pl-2.5 ${hasActions ? "pr-14" : "pr-2.5"} text-left text-xs leading-relaxed whitespace-pre-wrap ${
             message.role === "user"
               ? "bg-primary text-primary-foreground"
               : message.content.startsWith("Error:")
@@ -147,6 +165,13 @@ export function ChatMessageItem({
             <span className="text-2xs mr-1.5 font-mono uppercase opacity-70">sent mid-turn</span>
           )}
           {message.content}
+          {hasActions && (
+            <UserMessageActions
+              onRewind={onRewind}
+              onFork={onFork}
+              isRewindDisabled={isRewindDisabled}
+            />
+          )}
           {onRetry && (
             <div className="mt-1.5 flex justify-end">
               <button

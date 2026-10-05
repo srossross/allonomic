@@ -10,14 +10,7 @@ import { applyGovernorAction } from "./reducer";
 import { createGovernorPromptTools, type GovernorDispatch } from "./tools";
 import { GovernorForkRunner } from "./forkRunner";
 import { assumptionSection, buildIntentBrief } from "./prompts";
-import { runAssumptionExit, runDecide, type ExitOutcome } from "./assumptionExit";
-import type { ExitDecision } from "./assumptionTools";
-
-function toOutcome(decided: ExitDecision): ExitOutcome {
-  return decided.kind === "approve"
-    ? { approved: true }
-    : { approved: false, feedback: decided.why };
-}
+import { runAssumptionExit, runDecide, toOutcome } from "./assumptionExit";
 
 export type { GovernorModel } from "./fork";
 
@@ -163,7 +156,12 @@ export class GovernorInterceptor implements AgentInterceptor {
     const outcome = this.hasAssumptions
       ? await runAssumptionExit(request)
       : toOutcome(await runDecide(request, conversation));
-    context.events.emit({ type: "governor_verdict", phase: "exit", interceptor: this.name, ...outcome });
+    context.events.emit({
+      type: "governor_verdict",
+      phase: "exit",
+      interceptor: this.name,
+      ...outcome,
+    });
     return { allowFinish: outcome.approved, feedback: outcome.feedback };
   }
 }

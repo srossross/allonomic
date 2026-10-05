@@ -80,6 +80,7 @@ export function ShellStatus({ tc }: { tc: ToolCallInfo }) {
 export function ShellSummary({ tc }: { tc: ToolCallInfo }) {
   const tcArguments = tc.args ?? {};
   const command = String(tcArguments.command || tcArguments.cmd || "");
+  const query = typeof tcArguments.query === "string" ? tcArguments.query : "";
   const blocked = tc.status === "blocked" ? "line-through opacity-60" : "";
   return (
     <span className="flex min-w-0 flex-col gap-0.5">
@@ -88,6 +89,11 @@ export function ShellSummary({ tc }: { tc: ToolCallInfo }) {
       >
         {command}
       </span>
+      {query && (
+        <span className="text-muted-foreground text-2xs font-mono leading-3 break-all whitespace-pre-wrap">
+          <span className="font-semibold tracking-wider uppercase">Query</span> {query}
+        </span>
+      )}
       <span className="flex items-center">
         <ShellModeDot name={tc.name} />
         <ShellMeta tc={tc} />

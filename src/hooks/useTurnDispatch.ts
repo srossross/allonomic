@@ -7,6 +7,7 @@ import {
 } from "@/core/turn/events";
 import { applyTurnEvent } from "@/core/turn/transcript";
 import { EMPTY_PROFILE } from "@/core/turn/profile";
+import { EMPTY_TURN_TREE } from "@/core/turn/branches";
 
 function isTerminal(event: TurnEvent): boolean {
   return event.type === "turn_completed" || event.type === "turn_failed";
@@ -21,8 +22,11 @@ function applyTurnEventToTab(tab: TabData, event: TurnEvent): TabData {
       agentFiles: tab.agentFiles ?? [],
       governorState: tab.governorState,
       contextTokens: tab.contextTokens,
+      tokenUsage: tab.tokenUsage ?? [],
       waitingOn: tab.waitingOn,
+      pendingPrompt: tab.pendingPrompt,
       profile: tab.profile ?? EMPTY_PROFILE,
+      turnTree: tab.turnTree ?? EMPTY_TURN_TREE,
     },
     event
   );

@@ -25,25 +25,35 @@ const intentA: UserIntent = {
 
 const record = (overrides: Record<string, unknown> = {}) => ({
   name: "record_assumption",
-  args: {
-    intent_id: "itnt_a",
-    text: "the PR is #4",
+  args: { intent_id: "itnt_a", text: "the PR is #4", ...overrides },
+});
+
+const classify = (
+  getGovernor: () => GovernorInterceptor,
+  overrides: Record<string, unknown> = {},
+  index = 0
+) => ({
+  name: "add_to_assumption",
+  args: () => ({
+    id: getGovernor().state.assumptions[index].id,
     resolver: "user",
     impact_category: "wrong_answer",
     user_would_care: false,
     candidates: "one",
     impact_cost: "low",
     ...overrides,
-  },
+  }),
 });
 
 const LIST = { text: "- [open] the PR is #4" };
-const CLASSIFIED = { name: "finish_classify" };
+const RECORDED = { name: "finish_record" };
 const APPROVE = { name: "atLeastOneIntentWasSatisfied" };
 
 const askFirst = (getGovernor: () => GovernorInterceptor) => ({
   name: "ask_user",
-  args: () => ({ assumption_id: getGovernor().state.assumptions[0].id }),
+  args: () => ({
+    questions: [{ assumption_id: getGovernor().state.assumptions[0].id, topic: "PR" }],
+  }),
 });
 
 describe("governor passes", () => {
@@ -64,11 +74,19 @@ describe("governor passes", () => {
     expect(passes(events)).toEqual(["entry.md"]);
   });
 
-  it("exit lists, classifies and decides when nothing needs asking, dropping response_text", async () => {
+  it("exit lists, records, classifies and decides when nothing needs asking, dropping response_text", async () => {
     const { context, events } = recordingContext();
     const { model, governor } = scriptedGovernor(
       runtime,
-      [LIST, record(), record({ impact_category: "response_text" }), CLASSIFIED, APPROVE],
+      [
+        LIST,
+        record(),
+        record({ text: "the reply is short" }),
+        RECORDED,
+        classify(() => governor),
+        classify(() => governor, { impact_category: "response_text" }, 1),
+        APPROVE,
+      ],
       { initialState: { intent_stack: [intentA] } }
     );
 
@@ -77,24 +95,83 @@ describe("governor passes", () => {
     expect(verdict).toEqual({ allowFinish: true, feedback: undefined });
     expect(passes(events)).toEqual([
       "assumptions_list.md",
+      "assumptions_record.md",
       "assumptions_classify.md",
       "assumptions_decide.md",
     ]);
+    expect(texts(firstInputFor(model.inputs, "RECORD"))).toEqual([
+      `RECORD\n- itnt_a: Summarize PR comments\n${LIST.text}`,
+    ]);
     const classifyInput = texts(firstInputFor(model.inputs, "CLASSIFY"));
-    expect(classifyInput.slice(0, 5)).toEqual([...texts(conversation), "LIST", LIST.text]);
-    expect(governor.state.assumptions).toHaveLength(1);
+    expect(classifyInput.slice(0, 3)).toEqual(texts(conversation));
+    expect(classifyInput[3]).toContain("## Open Assumptions");
+    expect(governor.state.assumptions.map((a) => a.text)).toEqual(["the PR is #4"]);
+  });
+
+  it("resolved assumptions skip classify and depends_on links by parent text", async () => {
+    const { context, events } = recordingContext();
+    const { governor } = scriptedGovernor(
+      runtime,
+      [
+        LIST,
+        record({ evidence: "user said PR #4" }),
+        record({ text: "PR #4 is open", evidence: "state: open", depends_on: "the PR is #4" }),
+        RECORDED,
+        APPROVE,
+      ],
+      { initialState: { intent_stack: [intentA] } }
+    );
+
+    await governor.onAgentFinish(conversation, context);
+
+    expect(passes(events)).toEqual([
+      "assumptions_list.md",
+      "assumptions_record.md",
+      "assumptions_decide.md",
+    ]);
+    const [parent, child] = governor.state.assumptions;
+    expect(parent.status).toBe("resolved");
+    expect(child.depends_on).toBe(parent.id);
+  });
+
+  it("finish_record is refused after a refused record", async () => {
+    const { context } = recordingContext();
+    const { governor } = scriptedGovernor(
+      runtime,
+      [
+        LIST,
+        record({ depends_on: "missing parent", evidence: "x" }),
+        RECORDED,
+        record({ evidence: "x" }),
+        RECORDED,
+        APPROVE,
+      ],
+      { initialState: { intent_stack: [intentA] } }
+    );
+
+    await governor.onAgentFinish(conversation, context);
+
+    expect(governor.state.assumptions.map((a) => a.depends_on)).toEqual([null]);
   });
 
   it("asks flagged assumptions and approves when every answer is confirm", async () => {
     const asked: string[] = [];
     const askUser: AskUser = async (prompt) => {
-      asked.push(prompt.label);
-      return true;
+      if (prompt.kind !== "assumptions") throw new Error(`Unexpected prompt: ${prompt.kind}`);
+      asked.push(...prompt.questions.map((q) => q.label));
+      return Object.fromEntries(prompt.questions.map((q) => [q.id, true]));
     };
     const { context, events } = recordingContext("t1", 1, askUser);
     const { governor } = scriptedGovernor(
       runtime,
-      [LIST, record({ candidates: "countable" }), CLASSIFIED, askFirst(() => governor), APPROVE],
+      [
+        LIST,
+        record(),
+        RECORDED,
+        classify(() => governor, { candidates: "countable", user_would_care: true }),
+        askFirst(() => governor),
+        APPROVE,
+      ],
       { initialState: { intent_stack: [intentA] } }
     );
 
@@ -104,6 +181,7 @@ describe("governor passes", () => {
     expect(asked).toEqual(["We assumed: the PR is #4"]);
     expect(passes(events)).toEqual([
       "assumptions_list.md",
+      "assumptions_record.md",
       "assumptions_classify.md",
       "assumptions_ask.md",
       "assumptions_decide.md",
@@ -116,8 +194,9 @@ describe("governor passes", () => {
       runtime,
       [
         LIST,
-        record({ candidates: "countable" }),
-        CLASSIFIED,
+        record(),
+        RECORDED,
+        classify(() => governor, { candidates: "countable", user_would_care: true }),
         askFirst(() => governor),
         APPROVE,
         { name: "returnToWorkerWithUnresolvedAssumptions", args: { why: "wrong PR" } },
@@ -139,13 +218,13 @@ describe("governor passes", () => {
       runtime,
       [
         LIST,
-        record({ resolver: "tool", text: "bot comments count" }),
-        record({
+        record({ text: "inline threads were not needed" }),
+        RECORDED,
+        classify(() => governor, { resolver: "tool" }),
+        classify(() => governor, {
           resolver: "tool",
-          text: "inline threads were not needed",
           request: "Fetch the line-by-line review comments on PR #4.",
         }),
-        CLASSIFIED,
         APPROVE,
       ],
       { initialState: { intent_stack: [intentA] } }

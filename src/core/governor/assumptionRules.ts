@@ -7,10 +7,7 @@ function isOpen(assumption: Assumption): boolean {
 export function shouldAskUser(assumption: Assumption): boolean {
   const isUserItem =
     isOpen(assumption) && assumption.resolver === "user" && assumption.depends_on === null;
-  const isRisky =
-    assumption.user_would_care === true ||
-    assumption.impact_cost === "high" ||
-    assumption.candidates !== "one";
+  const isRisky = assumption.user_would_care === true || assumption.impact_cost === "high";
   return isUserItem && isRisky;
 }
 

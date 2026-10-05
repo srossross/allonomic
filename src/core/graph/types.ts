@@ -2,6 +2,7 @@ import type { BaseMessage, ToolMessage } from "@langchain/core/messages";
 import type { TurnEventSink } from "../turn/events";
 import type { UserPrompt, UserPromptValue } from "../../types/tools";
 import type { TurnControl } from "./turnControl";
+import type { ToolOutputStore } from "../tools/toolOutputCap";
 
 export type AskUser = (prompt: UserPrompt, toolCallId?: string) => Promise<UserPromptValue>;
 
@@ -35,6 +36,7 @@ export interface PipelineContext {
   askUser: AskUser;
   control?: TurnControl;
   recordSettings?: () => Promise<void>;
+  storeToolOutput?: ToolOutputStore;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -53,11 +55,15 @@ function isPipelineContext(value: unknown): value is PipelineContext {
   );
 }
 
-export function readPipelineContext(config: unknown): PipelineContext {
+export function findPipelineContext(config: unknown): PipelineContext | undefined {
   const configurable = isRecord(config) ? config.configurable : undefined;
   const context = isRecord(configurable) ? configurable.context : undefined;
-  if (!isPipelineContext(context))
-    throw new Error("Missing PipelineContext in config.configurable.context");
+  return isPipelineContext(context) ? context : undefined;
+}
+
+export function readPipelineContext(config: unknown): PipelineContext {
+  const context = findPipelineContext(config);
+  if (!context) throw new Error("Missing PipelineContext in config.configurable.context");
   return context;
 }
 

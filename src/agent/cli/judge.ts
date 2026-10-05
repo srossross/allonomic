@@ -47,5 +47,7 @@ export async function judgeOplog(
     ])
   );
   const call = response.tool_calls?.find((toolCall) => toolCall.name === "judge");
-  return call ? judgmentSchema.parse(call.args) : { verdict: "fail", reason: "judge did not return a verdict" };
+  return call
+    ? judgmentSchema.parse(call.args)
+    : { verdict: "fail", reason: "judge did not return a verdict" };
 }

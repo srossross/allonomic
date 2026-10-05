@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BACKGROUND_STARTUP_MS, INLINE_OUTPUT_LIMIT } from "./shellLimits";
 
 export type ToolCategory = "filesystem" | "shell" | "other";
 
@@ -11,17 +12,32 @@ export interface ToolSpec {
 
 const shellSchema = z.object({
   command: z.string().describe("The shell command to execute"),
+  timeout: z
+    .number()
+    .min(1)
+    .optional()
+    .describe(
+      "Seconds before a foreground command is killed. Defaults to the shell timeout setting."
+    ),
   background: z
     .boolean()
     .optional()
     .describe(
-      "Run as a background job and return immediately with a job id, for servers and other long-running processes. Its stdout and stderr are appended to the log file named in the result; read that file to see later output. Stop it with shell_job_kill. Do not append & to the command."
+      "Run as a background job and return with a job id, for servers and other long-running processes. Read later output with read_shell and the job id. Stop it with shell_job_kill. Do not append & to the command."
     ),
-  wait_for: z
+  background_startup_ms: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      `With background: milliseconds of startup output to collect before returning. Defaults to ${BACKGROUND_STARTUP_MS}.`
+    ),
+  query: z
     .string()
     .optional()
     .describe(
-      "With background: a regex; returns once the job's output matches it (e.g. a server's ready line), the job exits, or 30s pass."
+      `The question you want answered by running this command. The answer will be the return value if the output is over ${INLINE_OUTPUT_LIMIT} chars long. The full output is always stored - Use read_shell tool to access the full output`
     ),
 });
 
@@ -96,6 +112,26 @@ export const TOOL_SPECS = {
     description:
       "Run a shell command with no sandbox and the user's full access to the machine. For commands the sandboxed shells cannot run.",
     schema: shellSchema,
+  },
+  readShell: {
+    name: "read_shell",
+    category: "other",
+    description:
+      "Read the stored output of an earlier shell call or background job. Give at most one of query, filter or lines; with none, returns the output the way a shell call does.",
+    schema: z.object({
+      call_id: z.string().describe("The call id from a `stored as` header, or a background job id"),
+      query: z
+        .string()
+        .optional()
+        .describe(
+          "A question about the output; returns the lines that answer it, verbatim with line numbers"
+        ),
+      filter: z
+        .string()
+        .optional()
+        .describe("A shell pipeline that reads the output on stdin, e.g. grep -v node_modules"),
+      lines: z.string().optional().describe("A line range, e.g. 200-260"),
+    }),
   },
   shellJobKill: {
     name: "shell_job_kill",

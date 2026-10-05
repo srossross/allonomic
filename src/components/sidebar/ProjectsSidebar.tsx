@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { FolderPlus, ListPlus } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderPlus, ListPlus } from "lucide-react";
 import {
   GROUP_COLORS,
   GROUP_COLOR_KEYS,
@@ -45,6 +45,7 @@ export function ProjectsSidebar({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [isCommandHeld, setIsCommandHeld] = useState(false);
+  const [isUngroupedCollapsed, setIsUngroupedCollapsed] = useState(false);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => setIsCommandHeld(e.metaKey);
@@ -165,7 +166,7 @@ export function ProjectsSidebar({
                   }`}
                 >
                   <span
-                    className={`pointer-events-none absolute inset-y-0 left-0 z-10 w-0.5 ${GROUP_COLORS[group.color].dot}`}
+                    className={`pointer-events-none absolute inset-y-0 left-0 z-10 w-1 ${GROUP_COLORS[group.color].dot}`}
                   />
                   <GroupHeader
                     group={group}
@@ -199,10 +200,20 @@ export function ProjectsSidebar({
                 {...dropTargetProps(UNGROUPED_KEY, undefined)}
                 className={`min-h-16 ${dragOverKey === UNGROUPED_KEY ? "ring-primary ring-1 ring-inset" : ""}`}
               >
-                <div className="border-border/60 text-muted-foreground text-2xs flex h-6 items-center border-b px-3 font-semibold tracking-tight">
-                  Ungrouped
-                </div>
-                {ungrouped.map((p) => renderProject(p))}
+                <button
+                  type="button"
+                  onClick={() => setIsUngroupedCollapsed((c) => !c)}
+                  className="border-border/60 text-muted-foreground text-2xs hover:bg-muted/40 flex h-6 w-full cursor-pointer items-center gap-1.5 border-b pr-2 pl-1.5 font-semibold tracking-tight"
+                >
+                  {isUngroupedCollapsed ? (
+                    <ChevronRight className="size-3.5 shrink-0" />
+                  ) : (
+                    <ChevronDown className="size-3.5 shrink-0" />
+                  )}
+                  <span className="flex-1 text-left">Ungrouped</span>
+                  <span className="font-mono">{ungrouped.length}</span>
+                </button>
+                {!isUngroupedCollapsed && ungrouped.map((p) => renderProject(p))}
               </div>
             ) : (
               ungrouped.map((p) => renderProject(p))

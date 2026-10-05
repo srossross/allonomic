@@ -64,7 +64,6 @@ export function buildIntentBrief({
 export function assumptionSection(state: GovernorState): PromptSection {
   return {
     title: "Assumptions",
-    body:
-      state.assumptions.length === 0 ? "(none)" : JSON.stringify(state.assumptions, null, 2),
+    body: state.assumptions.length === 0 ? "(none)" : JSON.stringify(state.assumptions, null, 2),
   };
 }

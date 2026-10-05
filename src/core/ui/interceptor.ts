@@ -148,6 +148,7 @@ export class UiInterceptor implements AgentInterceptor {
         scratchpad,
         label: `${this.name} · ${PASS}`,
         model: this.createModel(tools),
+        modelName: this.modelName,
         tools,
         decision: () => response,
         nudge: "Present the turn with your tools, then call finish().",

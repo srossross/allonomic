@@ -9,6 +9,14 @@ const modelEntrySchema = z.object({
   label: z.string().min(1),
   thinking: z.array(z.enum(THINKING_LEVELS)),
   input_token_limit: z.number().int().positive(),
+  price_per_million: z
+    .object({
+      input: z.number().nonnegative(),
+      output: z.number().nonnegative(),
+      long_input: z.number().nonnegative().optional(),
+      long_output: z.number().nonnegative().optional(),
+    })
+    .optional(),
 });
 
 const modelsFileSchema = z.object({ models: z.array(modelEntrySchema) });
@@ -21,6 +29,12 @@ function toModelOption(entry: z.infer<typeof modelEntrySchema>): ModelOption {
     label: entry.label,
     thinking: entry.thinking,
     inputTokenLimit: entry.input_token_limit,
+    price: entry.price_per_million && {
+      input: entry.price_per_million.input,
+      output: entry.price_per_million.output,
+      longInput: entry.price_per_million.long_input ?? entry.price_per_million.input,
+      longOutput: entry.price_per_million.long_output ?? entry.price_per_million.output,
+    },
   };
 }
 

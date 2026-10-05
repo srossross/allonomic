@@ -74,7 +74,7 @@ export function ProjectRow({
       onKeyDown={activateOnKey(onSelect)}
       className={`group border-border/40 flex w-full cursor-pointer flex-col items-start gap-1 border-b px-3 py-2.5 text-left transition-colors ${
         isActive
-          ? "bg-muted/70 text-foreground font-medium"
+          ? "bg-primary/10 ring-primary/40 text-foreground font-medium ring-1 ring-inset"
           : "text-muted-foreground hover:bg-muted/30 hover:text-foreground"
       }`}
     >

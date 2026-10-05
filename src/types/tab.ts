@@ -2,7 +2,9 @@ import type { GovernorState } from "@/core/governor/types";
 import { EMPTY_GOVERNOR_STATE } from "@/core/governor/reducer";
 import type { InterceptorSettings } from "@/core/config/settings";
 import type { Profile } from "@/core/turn/profile";
+import type { TokenUsage } from "@/core/turn/usage";
 import type { QueuedPrompt } from "@/core/graph/turnControl";
+import type { TurnTree } from "@/core/turn/branches";
 import {
   type Message,
   type ContextMessage,
@@ -12,7 +14,7 @@ import {
 } from "./chat";
 import type { AgentFileRow, ConsoleEvent } from "./inspector";
 import type { SessionLoadError } from "./persistence";
-import { AVAILABLE_TOOLS } from "./tools";
+import { AVAILABLE_TOOLS, type PendingPrompt } from "./tools";
 
 export type { GovernorState } from "@/core/governor/types";
 
@@ -41,11 +43,15 @@ export interface TabData {
   interceptorSettings?: Record<string, InterceptorSettings>;
   loadErrors?: SessionLoadError[];
   contextTokens?: number;
+  tokenUsage?: TokenUsage;
   waitingOn?: string;
+  pendingPrompt?: PendingPrompt;
   profile?: Profile;
   queuedPrompts?: QueuedPrompt[];
   pauseState?: "pausing" | "paused";
   queueHeld?: boolean;
+  turnTree?: TurnTree;
+  draft?: { text: string; nonce: number };
 }
 
 export const INITIAL_TOOLS = AVAILABLE_TOOLS.map((t) => t.name);

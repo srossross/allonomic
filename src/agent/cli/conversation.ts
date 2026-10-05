@@ -195,8 +195,14 @@ async function runExpectation(
         onEvent,
       });
     } else {
-      await runExitOnly(interceptors, runner, history, seed.turnIndex, workspaceDir, onEvent, (prompt) =>
-        autoAnswer(prompt, options.isYes)
+      await runExitOnly(
+        interceptors,
+        runner,
+        history,
+        seed.turnIndex,
+        workspaceDir,
+        onEvent,
+        (prompt) => autoAnswer(prompt, options.isYes)
       );
     }
   } catch (error) {
@@ -211,7 +217,11 @@ async function runExpectation(
   for (const pattern of patterns) {
     const isMet = runEvents.some((event) => isMatch(event, pattern));
     if (isMet) expectPassed++;
-    console.log(isMet ? green(`  ✔ expect ${JSON.stringify(pattern)}`) : red(`  ✘ expect ${JSON.stringify(pattern)}`));
+    console.log(
+      isMet
+        ? green(`  ✔ expect ${JSON.stringify(pattern)}`)
+        : red(`  ✘ expect ${JSON.stringify(pattern)}`)
+    );
   }
 
   const judgment = expectation.judge
@@ -222,7 +232,8 @@ async function runExpectation(
         options.judgeModel
       )
     : undefined;
-  if (judgment) console.log(paintJudgment(judgment)(`  judge ${judgment.verdict}: ${judgment.reason}`));
+  if (judgment)
+    console.log(paintJudgment(judgment)(`  judge ${judgment.verdict}: ${judgment.reason}`));
   console.log();
 
   return { name, expectPassed, expectTotal: patterns.length, judgment };

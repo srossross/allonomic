@@ -7,11 +7,13 @@ import { createPermissionTools } from "./permissions";
 import { createWebTools } from "./web";
 import type { ToolStops } from "./toolStops";
 import type { BackgroundJobs } from "../jobs/backgroundJobs";
+import type { CreateShellReaderModel } from "./shellReader";
 
 export interface AgentToolOptions {
   sessionId?: string;
   stops?: ToolStops;
   jobs?: BackgroundJobs;
+  createShellReaderModel?: CreateShellReaderModel;
 }
 
 export function createAgentTools(

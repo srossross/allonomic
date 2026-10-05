@@ -33,6 +33,7 @@ export type KillSignal = "SIGTERM" | "SIGKILL";
 
 export interface SpawnOptions {
   cwd?: string;
+  env?: Record<string, string>;
   onOutput(stream: ShellStream, text: string): void;
 }
 

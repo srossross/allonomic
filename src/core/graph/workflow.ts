@@ -7,17 +7,18 @@ import {
 } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import {
+  AIMessage,
   HumanMessage,
   SystemMessage,
   ToolMessage,
   isAIMessage,
-  type AIMessage,
   type AIMessageChunk,
   type BaseMessage,
   type BaseMessageLike,
 } from "@langchain/core/messages";
 import { nanoid } from "nanoid";
 import { invokeWaiting, TOOL_SOURCE, WORKER_SOURCE } from "../turn/waiting";
+import { emitModelUsage, WORKER_AGENT } from "../turn/usage";
 import {
   extractThinking,
   messageText,
@@ -31,6 +32,8 @@ import { USER_ACTOR } from "../turn/events";
 import { briefText, exitRetryText, type Brief } from "../turn/ops";
 import { emitToolResults } from "./recovery";
 import { userPromptMessage } from "./userPrompt";
+import { capToolMessage } from "../tools/toolOutputCap";
+import { callIdKwargs, forModel, newCallId, ourToolCalls } from "./callIds";
 
 type State = typeof MessagesAnnotation.State;
 
@@ -87,7 +90,8 @@ export function createCompiledWorkflow(
   toolNode: ToolNode,
   checkpointer: BaseCheckpointSaver,
   interceptors: AgentInterceptor[],
-  systemPrompt: string
+  systemPrompt: string,
+  modelName: string
 ) {
   const modelInput = (state: State): BaseMessage[] =>
     workerConversation(systemPrompt, state.messages);
@@ -136,15 +140,16 @@ export function createCompiledWorkflow(
       () => model.invoke(messages)
     );
     response.id ??= `step_${nanoid()}`;
-    const toolCalls = (response.tool_calls ?? []).map((call) => {
-      call.id ??= `call_${nanoid()}`;
-      return {
-        id: call.id,
-        name: call.name,
-        args: call.args,
-        thoughtSignature: thoughtSignatureFor(response, call.id),
-      };
-    });
+    const callIds = (response.tool_calls ?? []).map(() => newCallId());
+    if (callIds.length > 0)
+      response.additional_kwargs = { ...response.additional_kwargs, ...callIdKwargs(callIds) };
+    const toolCalls = (response.tool_calls ?? []).map((call, i) => ({
+      id: callIds[i],
+      providerId: call.id,
+      name: call.name,
+      args: call.args,
+      thoughtSignature: call.id ? thoughtSignatureFor(response, call.id) : undefined,
+    }));
     const thinking = extractThinking(response);
     context.events.emit({
       type: "model_step",
@@ -155,6 +160,7 @@ export function createCompiledWorkflow(
       durationMs: Date.now() - startedAt,
       inputTokens: response.usage_metadata?.input_tokens,
     });
+    emitModelUsage(context.events, WORKER_AGENT, modelName, response);
     return { messages: [response] };
   };
 
@@ -162,7 +168,9 @@ export function createCompiledWorkflow(
     const context = readPipelineContext(config);
     const conversation = modelInput(state);
     const last = state.messages.at(-1);
-    const calls = last && isAIMessage(last) ? (last.tool_calls ?? []) : [];
+    const step = last && isAIMessage(last) ? last : undefined;
+    const calls = step ? ourToolCalls(step) : [];
+    const providerIds = new Map(calls.map((call, i) => [call.id, step?.tool_calls?.[i]?.id]));
 
     await context.recordSettings?.();
     const verdicts = await Promise.all(
@@ -179,7 +187,7 @@ export function createCompiledWorkflow(
 
     // ToolNode skips calls that already have a ToolMessage, so only approved calls execute.
     const output: unknown = await toolNode.invoke(
-      { messages: [...state.messages, ...denials] },
+      { messages: [new AIMessage({ content: "", tool_calls: calls }), ...denials] },
       config
     );
     const raw: unknown =
@@ -190,7 +198,9 @@ export function createCompiledWorkflow(
     const taught = await Promise.all(
       calls.map(async (call) => {
         const result = executed.find((m) => m.tool_call_id === call.id);
-        return result && withPostToolLessons(interceptors, call, result, conversation, context);
+        if (!result) return;
+        const capped = await capToolMessage(result, context.storeToolOutput);
+        return withPostToolLessons(interceptors, call, capped, conversation, context);
       })
     );
     const results = [...denials, ...taught.filter((m) => m !== undefined)];
@@ -199,7 +209,7 @@ export function createCompiledWorkflow(
       .filter((m) => m !== undefined);
 
     emitToolResults(context.events, messages);
-    return { messages };
+    return { messages: messages.map((m) => forModel(m, providerIds.get(m.tool_call_id))) };
   };
 
   const exitInterceptorsNode = async (state: State, config: LangGraphRunnableConfig) => {

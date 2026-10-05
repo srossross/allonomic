@@ -3,6 +3,7 @@ import { ToolNode } from "@langchain/langgraph/prebuilt";
 import type { BaseMessage } from "@langchain/core/messages";
 import { turnPromptMessage } from "./userPrompt";
 import { createAgentTools } from "../tools";
+import { createToolOutputStore } from "../tools/toolOutputCap";
 import { logConversation } from "../telemetry/logger";
 import { generateSessionId } from "../telemetry/session";
 import { failTurn } from "./turnPersistence";
@@ -129,7 +130,8 @@ export class AgentRunner {
       toolNode,
       this.checkpointer,
       this.interceptors,
-      this.systemPrompt
+      this.systemPrompt,
+      this.modelName
     );
   }
 
@@ -159,6 +161,7 @@ export class AgentRunner {
       askUser: this.prompts.createAskUser(sink, controller.signal),
       control: this.controls.start(threadId),
       recordSettings: this.settings.inUserScope(sink),
+      storeToolOutput: createToolOutputStore(this.runtime, this.workspaceDir, this.sessionId),
     };
     let startCount = 0;
     const turnRecord = () => ({ turnIndex, prompt, startCount, events, sink, closeOpenScopes });
@@ -260,6 +263,13 @@ export class AgentRunner {
     controller.abort();
     this.activeControllers.delete(threadId);
     return true;
+  }
+
+  public async resetThread(rewind: () => Promise<number>) {
+    if (this.activeControllers.size > 0) throw new Error("Cannot rewind while a turn is running");
+    this.turnIndex = await rewind();
+    this.checkpointer = new MemorySaver();
+    this.initGraph();
   }
 
   public setModelAndThinking(modelName?: string, thinkingBudget?: number) {

@@ -3,6 +3,8 @@ import type { AgentFileRow, ConsoleEvent } from "./inspector";
 import type { GovernorState } from "./tab";
 import type { RecoverableCall } from "../core/turn/events";
 import type { Profile } from "../core/turn/profile";
+import type { TokenUsage } from "../core/turn/usage";
+import type { TurnTree } from "../core/turn/branches";
 import type { GroupColor } from "./groupColors";
 
 export interface WorkspaceItem {
@@ -56,7 +58,9 @@ export interface RehydratedSession {
   agentFiles: AgentFileRow[];
   governorState: GovernorState;
   contextTokens?: number;
+  tokenUsage: TokenUsage;
   profile: Profile;
+  turnTree: TurnTree;
   nextTurnIndex: number;
   loadErrors: SessionLoadError[];
   unansweredCalls: RecoverableCall[];

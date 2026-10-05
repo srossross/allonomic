@@ -15,7 +15,8 @@ function run(script: ScriptedTurn[], interceptor: AgentInterceptor) {
     new ToolNode(tools),
     new MemorySaver(),
     [interceptor],
-    "system"
+    "system",
+    "test-model"
   );
   const { context, events } = recordingContext();
   const result = compiled.invoke(
@@ -59,7 +60,10 @@ describe("Pre-tool interception in the tools node", () => {
     ]);
     expect(String(toolMessages[0].content)).toBe("[INTERCEPTED by Gate]: no mutations");
 
-    expect(seen.map((s) => s.call.id)).toEqual(["c1", "c2"]);
+    const step = events.find((e) => e.type === "model_step");
+    const calls = step?.type === "model_step" ? step.toolCalls : [];
+    expect(calls.map((c) => c.providerId)).toEqual(["c1", "c2"]);
+    expect(seen.map((s) => s.call.id)).toEqual(calls.map((c) => c.id));
     expect(seen[0].conversation[0]?._getType()).toBe("system");
     expect(seen[0].conversation.at(-1)?._getType()).toBe("ai");
 

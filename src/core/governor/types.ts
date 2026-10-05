@@ -31,22 +31,30 @@ export const assumptionSchema = z.object({
   text: z.string(),
   status: z.enum(["open", "resolved"]),
   evidence: z.string().nullable().default(null),
-  resolver: z.enum(["user", "tool"]),
-  impact_category: z.enum([
-    "response_text",
-    "wrong_answer",
-    "incomplete_answer",
-    "wrong_change",
-    "wasted_work",
-  ]),
+  resolver: z.enum(["user", "tool"]).nullable().default(null),
+  impact_category: z
+    .enum(["response_text", "wrong_answer", "incomplete_answer", "wrong_change", "wasted_work"])
+    .nullable()
+    .default(null),
   user_would_care: z.boolean().nullable().default(null),
   request: z.string().nullable().default(null),
   depends_on: z.string().nullable().default(null),
-  candidates: z.enum(["one", "countable", "open"]),
-  impact_cost: z.enum(["low", "high"]),
+  candidates: z.enum(["one", "countable", "open"]).nullable().default(null),
+  impact_cost: z.enum(["low", "high"]).nullable().default(null),
 });
 
 export type Assumption = z.infer<typeof assumptionSchema>;
+
+export const classificationSchema = assumptionSchema.pick({
+  resolver: true,
+  impact_category: true,
+  user_would_care: true,
+  request: true,
+  candidates: true,
+  impact_cost: true,
+});
+
+export type Classification = z.infer<typeof classificationSchema>;
 
 export interface GovernorState {
   intent_stack: UserIntent[];
@@ -68,6 +76,12 @@ export const governorActionSchema = z.discriminatedUnion("type", [
     what_changed: z.string().optional(),
   }),
   z.object({ type: z.literal("record_assumption"), assumption: assumptionSchema }),
+  z.object({
+    type: z.literal("classify_assumption"),
+    id: z.string(),
+    classification: classificationSchema,
+  }),
+  z.object({ type: z.literal("drop_assumption"), id: z.string() }),
   z.object({ type: z.literal("clear_assumptions") }),
   z.object({ type: z.literal("resolve_assumption"), id: z.string(), evidence: z.string() }),
   z.object({ type: z.literal("pop_intent"), id: z.string().optional() }),

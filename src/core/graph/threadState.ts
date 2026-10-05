@@ -1,6 +1,7 @@
 import { isAIMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { createLogger, type Logger } from "../log";
 import type { CompiledWorkflow } from "./workflow";
+import { callIdOf, forModel, ourToolCalls } from "./callIds";
 
 const defaultLog = createLogger("pipeline/threadState");
 
@@ -19,13 +20,24 @@ export async function closeUnansweredToolCalls(
   const state = await compiled.getState(config);
   const messages: BaseMessage[] = state?.values?.messages ?? [];
   const answered = new Set(
-    messages.filter((m): m is ToolMessage => m instanceof ToolMessage).map((m) => m.tool_call_id)
+    messages.filter((m): m is ToolMessage => m instanceof ToolMessage).map((m) => callIdOf(m))
   );
-  const closers = messages
-    .flatMap((m) => (isAIMessage(m) ? (m.tool_calls ?? []) : []))
-    .filter((c) => c.id && !answered.has(c.id))
-    .map((c) => new ToolMessage({ content, name: c.name, tool_call_id: c.id! }));
-  if (closers.length > 0) await compiled.updateState(config, { messages: closers }, "tools");
+  const unanswered = messages.flatMap((m) =>
+    isAIMessage(m)
+      ? ourToolCalls(m)
+          .map((call, i) => ({ call, providerId: m.tool_calls?.[i]?.id }))
+          .filter(({ call }) => call.id && !answered.has(call.id))
+      : []
+  );
+  const closers = unanswered.map(
+    ({ call }) => new ToolMessage({ content, name: call.name, tool_call_id: call.id ?? "" })
+  );
+  if (closers.length > 0)
+    await compiled.updateState(
+      config,
+      { messages: closers.map((m, i) => forModel(m, unanswered[i].providerId)) },
+      "tools"
+    );
   return closers;
 }
 

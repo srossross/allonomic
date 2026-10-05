@@ -182,6 +182,7 @@ export class ToolTeacherInterceptor implements AgentInterceptor {
         scratchpad,
         label: `${this.name} · ${pass}`,
         model: this.createModel(tools),
+        modelName: this.modelName,
         tools,
         decision,
         nudge,

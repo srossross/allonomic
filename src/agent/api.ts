@@ -16,6 +16,7 @@ import {
   listInterceptors,
   type AgentTurnSummary,
 } from "./server";
+import { forkAgentSession, rewindAgentSession } from "./branching";
 import type { InterceptorInfo } from "../core/graph/types";
 import type { QueuedPrompt } from "../core/graph/turnControl";
 import {
@@ -45,6 +46,7 @@ import type {
 import { loadModels } from "../core/models";
 import type { RecoverableCall, TurnEventListener } from "@/core/turn/events";
 import type { JobListener } from "@/core/jobs/backgroundJobs";
+import type { TurnHead } from "@/core/turn/branches";
 import {
   loadWorkspacesConfig,
   addOrUpdateWorkspace,
@@ -163,6 +165,22 @@ export async function recoverSessionApi({
   ...options
 }: RecoverSessionParams): Promise<AgentTurnSummary> {
   return await recoverAgentSession(threadId, calls, options);
+}
+
+export async function rewindSessionApi(
+  workspaceDir: string,
+  sessionId: string,
+  head: TurnHead
+): Promise<RehydratedSession> {
+  return await rewindAgentSession(workspaceDir, sessionId, head);
+}
+
+export async function forkSessionApi(
+  workspaceDir: string,
+  sessionId: string,
+  head: TurnHead
+): Promise<string> {
+  return await forkAgentSession(workspaceDir, sessionId, head);
 }
 
 export async function fetchInterceptorsApi(

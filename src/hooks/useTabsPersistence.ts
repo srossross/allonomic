@@ -21,6 +21,7 @@ import type { Settings, SettingsPatch } from "@/core/config/settings";
 import { EMPTY_GOVERNOR_STATE } from "@/core/governor/reducer";
 import type { RecoverableCall } from "@/core/turn/events";
 import { settingsToTab } from "./tabSettings";
+import { rehydratedToTab } from "./rehydratedTab";
 import { alertError, withAlert } from "@/lib/alertError";
 
 interface UseTabsPersistenceParameters {
@@ -72,16 +73,9 @@ export function useTabsPersistence({
                 title: rehydrated.metadata.title,
                 projectId: activeProject.id,
                 threadId: rehydrated.metadata.sessionId,
-                messages: rehydrated.messages,
-                contextMessages: rehydrated.contextMessages,
-                consoleEvents: rehydrated.consoleEvents,
-                agentFiles: rehydrated.agentFiles,
-                governorState: rehydrated.governorState,
+                ...rehydratedToTab(rehydrated),
                 loading: false,
                 ...settingsToTab(settings),
-                loadErrors: rehydrated.loadErrors,
-                contextTokens: rehydrated.contextTokens,
-                profile: rehydrated.profile,
               };
               loadedTabs.push(tab);
               if (rehydrated.unansweredCalls.length > 0)

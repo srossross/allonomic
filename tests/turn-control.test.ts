@@ -56,7 +56,8 @@ function build(script: ScriptedTurn[], interceptors: AgentInterceptor[] = []) {
     new ToolNode(tools),
     new MemorySaver(),
     interceptors,
-    "system"
+    "system",
+    "test-model"
   );
   const control = new TurnControl();
   const recorded = recordingContext();

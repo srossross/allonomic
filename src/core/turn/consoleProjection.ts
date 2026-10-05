@@ -32,6 +32,10 @@ function actionSummary(action: GovernorAction): string {
     case "record_assumption": {
       return `record_assumption: [${action.assumption.status}] "${action.assumption.text}" → '${action.assumption.intent_id}'`;
     }
+    case "classify_assumption":
+    case "drop_assumption": {
+      return `${action.type}: '${action.id}'`;
+    }
     case "clear_assumptions": {
       return "clear_assumptions";
     }
@@ -220,15 +224,17 @@ function rows(event: TurnEvent): Row[] {
         }));
     }
     case "waiting":
+    case "model_usage":
     case "presentation":
-    case "interceptor_passed": {
+    case "tool_output_stored":
+    case "interceptor_passed":
+    case "rewound": {
       return [];
     }
-    case "paused": {
-      return [{ type: "warning", badge: "PAUSE", badgeVariant: "amber", summary: "Paused" }];
-    }
+    case "paused":
     case "resumed": {
-      return [{ type: "warning", badge: "PAUSE", badgeVariant: "amber", summary: "Resumed" }];
+      const summary = event.type === "paused" ? "Paused" : "Resumed";
+      return [{ type: "warning", badge: "PAUSE", badgeVariant: "amber", summary }];
     }
     case "prompt_delivered": {
       return [

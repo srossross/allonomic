@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExecutionMode, UserPrompt, UserPromptValue } from "@/types";
 import { MODE_STYLES } from "./modeStyles";
-import { AssumptionPrompt } from "./AssumptionPrompt";
+import { AssumptionsPrompt } from "./AssumptionsPrompt";
 import { kbdClass, useKeyGuard } from "./promptKeys";
 
 interface PromptSurfaceProps {
@@ -20,8 +20,8 @@ export function PromptSurface({ prompt, onRespond }: PromptSurfaceProps) {
     case "text": {
       return <TextPrompt prompt={prompt} onRespond={onRespond} />;
     }
-    case "assumption": {
-      return <AssumptionPrompt prompt={prompt} onRespond={onRespond} />;
+    case "assumptions": {
+      return <AssumptionsPrompt prompt={prompt} onRespond={onRespond} />;
     }
   }
 }

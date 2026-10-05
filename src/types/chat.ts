@@ -1,5 +1,18 @@
 import type { ToolCallInfo } from "./tools";
 import type { Presentation } from "@/core/ui/presentation";
+import type { Assumption } from "@/core/governor/types";
+
+export type GovernorMarker =
+  | { kind: "popped"; interceptor: string; intent: string }
+  | {
+      kind: "exit";
+      interceptor: string;
+      approved: boolean;
+      feedback?: string;
+      resolved: Array<{ id: string; text: string }>;
+      unmetIntent?: string;
+      assumptions: Assumption[];
+    };
 
 export interface Message {
   id: string;
@@ -10,8 +23,10 @@ export interface Message {
   toolCalls?: ToolCallInfo[];
   isError?: boolean;
   isQueued?: boolean;
+  turnIndex?: number;
   brief?: { interceptor: string; text: string; doneWhen: string[] };
   presentation?: Presentation;
+  governor?: GovernorMarker;
 }
 
 export interface ContextMessage {
@@ -27,6 +42,14 @@ export interface ModelOption {
   label: string;
   thinking: ThinkingLevel[];
   inputTokenLimit: number;
+  price?: ModelPrice;
+}
+
+export interface ModelPrice {
+  input: number;
+  output: number;
+  longInput: number;
+  longOutput: number;
 }
 
 export const DEFAULT_MODEL_ID = "gemini-3.8-flash";

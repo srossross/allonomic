@@ -174,7 +174,8 @@ describe("ToolTeacher in the pipeline", () => {
       new ToolNode([failingShell]),
       new MemorySaver(),
       [teacher],
-      "system"
+      "system",
+      "test-model"
     );
     const { context, events } = recordingContext();
 

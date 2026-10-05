@@ -12,7 +12,7 @@ import {
   type UserPromptValue,
 } from "@/types";
 import type { QueuedPrompt } from "@/core/graph/turnControl";
-import type { PendingPrompt } from "./pendingPrompt";
+import type { PendingPrompt } from "@/types";
 import { ModeSelector } from "./ModeSelector";
 import { ModelSelector } from "./ModelSelector";
 import { PromptSurface } from "./PromptSurface";
@@ -22,6 +22,9 @@ import { QueuedPromptList } from "./QueuedPromptList";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import { useSlashCommands, type SlashCommand } from "./useSlashCommands";
 import { PLACEHOLDERS, statusText, type ComposerPhase } from "./composerPhase";
+import { useAutosizeTextarea } from "./useAutosizeTextarea";
+import { useComposerDraft } from "./useComposerDraft";
+import { useComposerShortcuts } from "./useComposerShortcuts";
 
 const GOVERNOR_MODE_LABELS: Record<GovernorMode, string> = {
   off: "off",
@@ -41,6 +44,7 @@ interface ChatComposerProperties {
   onResume?: (text: string) => void;
   onRemoveQueued?: (id: string) => boolean;
   onPopQueued?: () => string | undefined;
+  draft?: { text: string; nonce: number };
   onInputChange?: () => void;
   selectedModel?: string;
   onSelectModel?: (model: string) => void;
@@ -71,6 +75,7 @@ export function ChatComposer({
   onResume,
   onRemoveQueued,
   onPopQueued,
+  draft,
   onInputChange,
   selectedModel = DEFAULT_MODEL_ID,
   onSelectModel,
@@ -100,41 +105,13 @@ export function ChatComposer({
   useEffect(() => {
     textareaRef.current?.focus();
   }, [sessionId]);
+  useAutosizeTextarea(textareaRef, input, pendingPrompt);
+  useComposerDraft(draft, setInput, textareaRef);
+
   const inputTokenLimit = models?.find((m) => m.id === selectedModel)?.inputTokenLimit;
   const contextMeter = <ContextMeter usedTokens={contextTokens} limitTokens={inputTokenLimit} />;
 
-  // Global Shift+Tab listener so toggling works anywhere
-  useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.key !== "Tab" ||
-        !e.shiftKey ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLSelectElement ||
-        (e.target instanceof HTMLElement && e.target.isContentEditable)
-      ) {
-        return;
-      }
-      e.preventDefault();
-      onCycleExecutionMode();
-    };
-
-    globalThis.addEventListener("keydown", handleGlobalKeyDown);
-    return () => globalThis.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [onCycleExecutionMode]);
-
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (pendingPrompt || e.repeat || e.defaultPrevented || e.key !== "Escape") return;
-      if (phase === "running") onPause?.();
-      else if (phase === "idle" || phase === "held") return;
-      else onStopMessage?.();
-      e.preventDefault();
-    };
-    globalThis.addEventListener("keydown", handleEscape);
-    return () => globalThis.removeEventListener("keydown", handleEscape);
-  }, [phase, pendingPrompt, onPause, onStopMessage]);
+  useComposerShortcuts({ phase, pendingPrompt, onCycleExecutionMode, onPause, onStopMessage });
 
   const handleSelectCommand = (command: SlashCommand) => {
     onSendMessage(command.name);
@@ -148,7 +125,7 @@ export function ChatComposer({
       <div className="pt-1">
         <div className="border-border focus-within:border-primary/60 relative flex flex-col border-l-2 py-1 pl-2.5 transition-colors">
           <PromptSurface
-            key={pendingPrompt.toolId}
+            key={pendingPrompt.promptId}
             prompt={pendingPrompt.prompt}
             onRespond={(value) => onRespondToPrompt?.(value)}
           />

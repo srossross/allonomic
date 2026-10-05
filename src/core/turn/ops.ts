@@ -1,5 +1,6 @@
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { thoughtSignatureKwargs } from "../graph/thinking";
+import { callIdKwargs, forModel } from "../graph/callIds";
 import { turnPromptMessage, userPromptMessage } from "../graph/userPrompt";
 import type { TurnEvent } from "./events";
 
@@ -16,7 +17,7 @@ export function exitRetryText(feedback: string): string {
   return `Your output did not satisfy the exit criteria:${feedback}\nPlease address this feedback to complete the task.`;
 }
 
-function opMessage(event: TurnEvent): BaseMessage | undefined {
+function opMessage(event: TurnEvent, providerIds: Map<string, string>): BaseMessage | undefined {
   switch (event.type) {
     case "turn_started": {
       return event.prompt === null ? undefined : turnPromptMessage(event.prompt);
@@ -25,21 +26,31 @@ function opMessage(event: TurnEvent): BaseMessage | undefined {
       return userPromptMessage(event.text, { queueId: event.queueId });
     }
     case "model_step": {
+      const calls = event.toolCalls.map((call) => ({ ...call, id: call.providerId ?? call.id }));
+      for (const call of event.toolCalls) providerIds.set(call.id, call.providerId ?? call.id);
       return new AIMessage({
         id: event.stepId,
         content: event.content,
-        tool_calls: event.toolCalls.map(({ id, name, args }) => ({ id, name, args })),
+        tool_calls: calls.map(({ id, name, args }) => ({ id, name, args })),
         additional_kwargs:
-          event.toolCalls.length > 0 ? thoughtSignatureKwargs(event.toolCalls) : {},
+          calls.length > 0
+            ? {
+                ...callIdKwargs(event.toolCalls.map((call) => call.id)),
+                ...thoughtSignatureKwargs(calls),
+              }
+            : {},
       });
     }
     case "tool_result": {
-      return new ToolMessage({
-        content: event.content,
-        name: event.name,
-        tool_call_id: event.toolCallId,
-        status: event.status,
-      });
+      return forModel(
+        new ToolMessage({
+          content: event.content,
+          name: event.name,
+          tool_call_id: event.toolCallId,
+          status: event.status,
+        }),
+        providerIds.get(event.toolCallId)
+      );
     }
     case "exit_retry": {
       return new HumanMessage(exitRetryText(event.feedback));
@@ -52,6 +63,7 @@ function opMessage(event: TurnEvent): BaseMessage | undefined {
 
 export function replayWorkerMessages(events: TurnEvent[]): BaseMessage[] {
   const messages: BaseMessage[] = [];
+  const providerIds = new Map<string, string>();
   let briefs: Brief[] = [];
   const flushBriefs = () => {
     if (briefs.length > 0) messages.push(new HumanMessage(briefText(briefs)));
@@ -62,7 +74,7 @@ export function replayWorkerMessages(events: TurnEvent[]): BaseMessage[] {
       briefs.push(event);
       continue;
     }
-    const message = opMessage(event);
+    const message = opMessage(event, providerIds);
     if (!message) continue;
     flushBriefs();
     messages.push(message);

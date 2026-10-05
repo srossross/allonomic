@@ -29,8 +29,11 @@ function asLine(line: string) {
   return line.endsWith("\n") ? line : `${line}\n`;
 }
 
-const spawnProcess: Shell["spawn"] = async (program, args, { cwd, onOutput }) => {
-  const command = Command.create("sh", ["-c", GROUP_WRAPPER, "sh", program, ...args], { cwd });
+const spawnProcess: Shell["spawn"] = async (program, args, { cwd, env, onOutput }) => {
+  const command = Command.create("sh", ["-c", GROUP_WRAPPER, "sh", program, ...args], {
+    cwd,
+    env,
+  });
   let pgid: string | undefined;
   command.stdout.on("data", (line: string) => onOutput("stdout", asLine(line)));
   command.stderr.on("data", (line: string) => {

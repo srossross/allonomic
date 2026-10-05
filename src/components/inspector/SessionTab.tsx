@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Copy, Check, Folder, FileText, Share2, Cpu, Sparkles } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 import type { UserIntent } from "@/core/governor/types";
-import { GRAPH_RECURSION_LIMIT } from "@/core/graph/limits";
+import { usageCost, type TokenUsage } from "@/core/turn/usage";
 import {
   DEFAULT_EXECUTION_MODE,
   DEFAULT_MODEL_ID,
   type Message,
+  type ModelOption,
   type ThinkingLevel,
   type ExecutionMode,
 } from "@/types";
@@ -20,6 +21,8 @@ export interface SessionTabProps {
   executionMode?: ExecutionMode;
   intentStack?: UserIntent[];
   messages?: Message[];
+  tokenUsage?: TokenUsage;
+  models?: ModelOption[];
 }
 
 export function SessionTab({
@@ -30,6 +33,8 @@ export function SessionTab({
   executionMode = DEFAULT_EXECUTION_MODE,
   intentStack = [],
   messages = [],
+  tokenUsage = [],
+  models = [],
 }: SessionTabProps) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -38,7 +43,6 @@ export function SessionTab({
 
   const normalizedWorkspace = workspacePath.replace(/\/+$/, "");
   const sessionDir = `${normalizedWorkspace}/.allonomic/sessions/${sessionId}`;
-  const turnsDir = `${sessionDir}/turns`;
 
   const copyToClipboard = async (text: string, key: string) => {
     try {
@@ -83,106 +87,92 @@ export function SessionTab({
   };
 
   return (
-    <div className="space-y-4 p-2 text-xs">
-      <div className="bg-card border-border/80 rounded-md border p-3 shadow-xs">
-        <div className="text-foreground flex items-center justify-between pb-2 font-medium">
-          <div className="flex items-center gap-1.5">
-            <Folder className="text-primary size-4" />
-            <span>Session Storage</span>
-          </div>
-          <button
-            type="button"
-            onClick={handleCopyShareableTrace}
-            className="bg-primary/10 hover:bg-primary/20 text-primary flex cursor-pointer items-center gap-1 rounded-xs px-2 py-0.5 text-xs font-medium transition-colors"
-            title="Format and copy the active session state to share in chat"
-          >
-            {copiedKey === "trace" ? (
-              <>
-                <Check className="size-3 text-green-500" />
-                <span>Copied Trace!</span>
-              </>
-            ) : (
-              <>
-                <Share2 className="size-3" />
-                <span>Share Session</span>
-              </>
-            )}
-          </button>
-        </div>
+    <div className="divide-border/30 divide-y text-xs">
+      <button
+        type="button"
+        onClick={handleCopyShareableTrace}
+        className="hover:bg-muted/50 flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1.5 text-left transition-colors"
+      >
+        {copiedKey === "trace" ? (
+          <Check className="size-3 text-green-500" />
+        ) : (
+          <Copy className="text-muted-foreground size-3" />
+        )}
+        <span className="text-foreground font-medium">
+          {copiedKey === "trace" ? "Copied" : "Copy session"}
+        </span>
+      </button>
+      <CopyRow
+        label="Session dir"
+        value={sessionDir}
+        display={tildify(sessionDir)}
+        isCopied={copiedKey === "sessionDir"}
+        onCopy={() => copyToClipboard(sessionDir, "sessionDir")}
+      />
+      <UsageTable tokenUsage={tokenUsage} models={models} />
+    </div>
+  );
+}
 
-        <p className="text-muted-foreground pb-3 text-xs">
-          Session checkpoints, turns, and telemetry are persisted inside your workspace&apos;s{" "}
-          <code className="bg-muted text-foreground text-2xs rounded-xs px-1 py-0.5 font-mono">
-            .allonomic/
-          </code>{" "}
-          folder.
-        </p>
+function formatCost(cost: number | undefined): string {
+  return cost === undefined ? "—" : `$${cost.toFixed(2)}`;
+}
 
-        <div className="space-y-2">
-          <CopyRow
-            label="Active Session ID"
-            value={sessionId}
-            isCopied={copiedKey === "sessionId"}
-            onCopy={() => copyToClipboard(sessionId, "sessionId")}
-          />
-          <CopyRow
-            label="Session Directory"
-            value={sessionDir}
-            display={tildify(sessionDir)}
-            isCopied={copiedKey === "sessionDir"}
-            onCopy={() => copyToClipboard(sessionDir, "sessionDir")}
-          />
-          <CopyRow
-            label="Turns Directory"
-            value={turnsDir}
-            display={tildify(turnsDir)}
-            isCopied={copiedKey === "turnsDir"}
-            onCopy={() => copyToClipboard(turnsDir, "turnsDir")}
-          />
-        </div>
+function UsageRow({ label, input, output }: { label: string; input: string; output: string }) {
+  return (
+    <div className="text-foreground flex gap-3 py-0.5 font-mono font-medium tabular-nums">
+      <span className="flex-1">{label}</span>
+      <span className="w-20 text-right">{input}</span>
+      <span className="w-20 text-right">{output}</span>
+    </div>
+  );
+}
+
+function UsageTable({ tokenUsage, models }: { tokenUsage: TokenUsage; models: ModelOption[] }) {
+  const rows = tokenUsage.map((row) => {
+    const price = models.find((m) => m.id === row.model)?.price;
+    return { row, cost: price && usageCost(row, price) };
+  });
+  const isFullyPriced = rows.every(({ cost }) => cost);
+  const totalCost = isFullyPriced
+    ? {
+        input: rows.reduce((sum, { cost }) => sum + (cost?.input ?? 0), 0),
+        output: rows.reduce((sum, { cost }) => sum + (cost?.output ?? 0), 0),
+      }
+    : undefined;
+
+  return (
+    <div className="px-2 py-1.5">
+      <div className="text-muted-foreground text-2xs flex gap-3">
+        <span className="flex-1">Agent</span>
+        <span className="w-20 text-right">In</span>
+        <span className="w-20 text-right">Out</span>
       </div>
-
-      <div className="bg-card border-border/80 rounded-md border p-3 shadow-xs">
-        <div className="text-foreground flex items-center gap-1.5 pb-2 font-medium">
-          <Cpu className="text-primary size-4" />
-          <span>Runtime Configuration</span>
+      {rows.map(({ row }) => (
+        <div key={`${row.agent}:${row.model}`} className="flex gap-3 py-0.5 font-mono tabular-nums">
+          <div className="min-w-0 flex-1">
+            <div className="text-foreground break-all">{row.agent}</div>
+            <div className="text-muted-foreground text-2xs truncate">{row.model}</div>
+          </div>
+          <span className="w-20 text-right">{row.inputTokens.toLocaleString()}</span>
+          <span className="w-20 text-right">{row.outputTokens.toLocaleString()}</span>
         </div>
-
-        <div className="space-y-1.5 text-xs">
-          <div className="flex items-center justify-between py-0.5">
-            <span className="text-muted-foreground">Model</span>
-            <span className="text-foreground font-mono font-medium">{selectedModel}</span>
-          </div>
-          <div className="flex items-center justify-between py-0.5">
-            <span className="text-muted-foreground flex items-center gap-1">
-              <Sparkles className="size-3" />
-              Thinking Budget
-            </span>
-            <span className="text-foreground font-medium">{thinkingLevel}</span>
-          </div>
-          <div className="flex items-center justify-between py-0.5">
-            <span className="text-muted-foreground">Execution Mode</span>
-            <span className="text-foreground font-medium">{executionMode}</span>
-          </div>
-          <div className="flex items-center justify-between py-0.5">
-            <span className="text-muted-foreground">Graph Recursion Limit</span>
-            <span className="text-foreground font-mono font-medium">
-              {GRAPH_RECURSION_LIMIT} steps
-            </span>
-          </div>
-        </div>
+      ))}
+      <div className="border-border/30 mt-1 border-t pt-1">
+        <UsageRow
+          label="Total tokens"
+          input={tokenUsage.reduce((sum, row) => sum + row.inputTokens, 0).toLocaleString()}
+          output={tokenUsage.reduce((sum, row) => sum + row.outputTokens, 0).toLocaleString()}
+        />
+        <UsageRow
+          label="Total cost"
+          input={formatCost(totalCost?.input)}
+          output={formatCost(totalCost?.output)}
+        />
       </div>
-
-      <div className="bg-muted/20 border-border/60 rounded-md border p-3">
-        <div className="text-foreground flex items-center gap-1.5 font-medium">
-          <FileText className="text-muted-foreground size-3.5" />
-          <span>How to share this session</span>
-        </div>
-        <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
-          Click <strong>Share Session</strong> above to copy the formatted session trace to your
-          clipboard. You can paste it directly into this chat to inspect prompts, intents, and tool
-          calls.
-        </p>
+      <div className="text-foreground mt-1 flex justify-between font-mono font-medium tabular-nums">
+        <span>Total cost</span>
+        <span>{formatCost(totalCost && totalCost.input + totalCost.output)}</span>
       </div>
     </div>
   );
@@ -202,8 +192,8 @@ function CopyRow({
   onCopy: () => void;
 }) {
   return (
-    <div className="bg-muted/40 rounded-xs p-2">
-      <div className="text-muted-foreground text-2xs flex items-center justify-between uppercase">
+    <div className="px-2 py-1.5">
+      <div className="text-muted-foreground flex items-center justify-between text-2xs">
         <span>{label}</span>
         <button
           type="button"
@@ -211,7 +201,6 @@ function CopyRow({
           className="hover:text-foreground flex cursor-pointer items-center gap-1 transition-colors"
         >
           {isCopied ? <Check className="size-3 text-green-500" /> : <Copy className="size-3" />}
-          <span>{isCopied ? "Copied" : "Copy"}</span>
         </button>
       </div>
       <div className="text-foreground mt-0.5 font-mono text-xs break-all select-all">{display}</div>

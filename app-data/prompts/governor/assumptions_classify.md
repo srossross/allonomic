@@ -1,16 +1,11 @@
-Your sole job right now is to record the assumptions listed in the last assistant message above.
+Your sole job right now is to classify the assumptions listed under Open Assumptions.
 
-For each item, call `record_assumption` once:
+For each one, call `add_to_assumption` once. Send all calls in one response.
 
-- `intent_id`: the active intent the assumption belongs to.
-- `text`: a plain statement that reads after "We assumed:". Keep it short and concrete.
-- `evidence`: only for items marked [resolved]; an exact quote. Omit it for [open] items.
+- `id`: the assumption's id.
 - `resolver`, `impact_category`, `impact_cost`, `candidates`: as described on the tool.
 - `request`: only when `resolver` is `tool`; one imperative sentence telling the agent what to do. If you cannot write one, the item is not `tool`.
 - `user_would_care`: only when `resolver` is `user`.
-- `depends_on`: the id of an earlier recorded assumption when this item only describes or only matters for the choice made there. Record the parent first.
-
-If two items are the same decision, record it once.
 
 ## Resolver
 
@@ -21,8 +16,9 @@ Before choosing `user`, ask: could the agent just do the more complete thing wit
 
 ## User would care
 
-For `user` items, use the intent's `specificity` and the conversation to judge `user_would_care`: a low-specificity request leaves choices to the agent (false); a high-specificity request that left something out probably forgot it (true).
+`user_would_care` is true only when both hold:
 
-Skip items that are facts from tool output rather than assumptions. Do not merge or invent items.
+1. The choice changes what the user gets: the outcome they asked for, or something they will see, depend on, or have to undo. A choice that only changes how the agent got there is false.
+2. The conversation shows the user has a stake in this kind of choice: they constrained it or a neighbouring choice, discussed it, set it up earlier, or the intent's `specificity` is high and this was left out.
 
-When every item is recorded, call `finish_classify()`.
+Otherwise it is false. A low-specificity request leaves the choice to the agent. Whether the user cares depends on this user and this conversation, not on the kind of choice.

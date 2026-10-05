@@ -7,7 +7,6 @@ import { TabLoadErrorBanner } from "@/components/tabs/TabLoadErrorBanner";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { composerPhase } from "@/components/chat/composerPhase";
-import { findPendingPrompt } from "@/components/chat/pendingPrompt";
 import { IntentsPanel } from "@/components/inspector/IntentsPanel";
 import { useTabsManager } from "@/hooks/useTabsManager";
 import { usePromptResponses } from "@/hooks/usePromptResponses";
@@ -77,6 +76,9 @@ function App() {
     handleRemoveQueued,
     handlePopQueued,
     handleRetry,
+    handleRewind,
+    handleSwitchBranch,
+    handleFork,
     handleClearConsole,
     handleToggleContext,
     handleToggleTool,
@@ -156,7 +158,7 @@ function App() {
                 loading: t.loading,
                 hasUnread: t.hasUnread,
                 isPaused: !!t.pauseState,
-                needsInput: findPendingPrompt(t.messages) !== null,
+                needsInput: t.pendingPrompt !== undefined,
               }))}
               activeTabId={activeTabId}
               onSelectTab={setActiveTabId}
@@ -190,6 +192,7 @@ function App() {
                   phase={composerPhase(activeTab)}
                   queuedPrompts={activeTab.queuedPrompts}
                   waitingOn={activeTab.waitingOn}
+                  pendingPrompt={activeTab.pendingPrompt}
                   onSendMessage={handleSendMessage}
                   onStopMessage={() => void withAlert("Stop", handleStopMessage)}
                   toolControls={{
@@ -201,6 +204,13 @@ function App() {
                   onRemoveQueued={handleRemoveQueued}
                   onPopQueued={handlePopQueued}
                   onRetry={() => void withAlert("Retry", handleRetry)}
+                  turnTree={activeTab.turnTree}
+                  draft={activeTab.draft}
+                  onRewind={(turn) => void withAlert("Rewind", () => handleRewind(turn))}
+                  onFork={(turn) => void withAlert("Fork", () => handleFork(turn))}
+                  onSwitchBranch={(head) =>
+                    void withAlert("Switch branch", () => handleSwitchBranch(head))
+                  }
                   selectedModel={activeTab.selectedModel || DEFAULT_MODEL_ID}
                   onSelectModel={handleSelectModel}
                   models={models}
@@ -239,6 +249,7 @@ function App() {
               onSetInterceptorSettings={handleSetInterceptorSettings}
               messages={activeTab.messages}
               profile={activeTab.profile}
+              tokenUsage={activeTab.tokenUsage}
               intentStack={activeTab.governorState.intent_stack}
               completedIntents={activeTab.governorState.completed_intents}
               assumptions={activeTab.governorState.assumptions}

@@ -17,8 +17,14 @@ export function formatTraceLine(event: TurnEvent): string {
         ? `[STEP] Model requested ${event.toolCalls.length} tool(s): ${event.toolCalls.map((t) => t.name).join(", ")} (${event.durationMs}ms)`
         : `[STEP] Model emitted response without tool calls. (${event.durationMs}ms)`;
     }
+    case "model_usage": {
+      return `[USAGE] ${event.agent ?? event.actor} ${event.model} in=${event.inputTokens} out=${event.outputTokens}`;
+    }
     case "tool_result": {
       return `[TOOL_RESULT] ${event.name} (${event.toolCallId}): ${clip(event.content)}`;
+    }
+    case "tool_output_stored": {
+      return `[TOOL_OUTPUT] ${event.toolCallId}: ${event.lines} lines, ${event.chars} chars in ${event.path}`;
     }
     case "prompt_requested": {
       return `[PROMPT] ${event.promptId}${event.toolCallId ? ` (${event.toolCallId})` : ""}: ${clip(event.prompt.label)}`;
@@ -85,6 +91,9 @@ export function formatTraceLine(event: TurnEvent): string {
     }
     case "warning": {
       return `[WARNING] ${event.source}: ${event.message}`;
+    }
+    case "rewound": {
+      return `[REWOUND] ${turn}: head=${event.head ?? "root"}`;
     }
     case "turn_completed": {
       return `[TURN_SUCCESS] ${turn} finished successfully (retries: ${event.retries}).`;

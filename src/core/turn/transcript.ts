@@ -3,6 +3,7 @@ import type {
   ConsoleEvent,
   ContextMessage,
   Message,
+  PendingPrompt,
   ToolCallInfo,
 } from "../../types";
 import type { GovernorState } from "../governor/types";
@@ -10,8 +11,12 @@ import { applyGovernorAction, EMPTY_GOVERNOR_STATE } from "../governor/reducer";
 import { decodeToolResult } from "../userPrompt";
 import { projectConsoleEvents } from "./consoleProjection";
 import { applyAgentFiles } from "./agentFiles";
+import { exitMarkerMessage, popMarkerMessage } from "./governorMarkers";
 import type { TurnEvent, TurnEventOf } from "./events";
 import { applyProfileEvent, EMPTY_PROFILE, type Profile } from "./profile";
+import { addModelUsage, type TokenUsage } from "./usage";
+import { nextPendingPrompt, nextWaitingOn } from "./transcriptStatus";
+import { applyTurnTreeEvent, EMPTY_TURN_TREE, type TurnTree } from "./branches";
 
 export interface Transcript {
   messages: Message[];
@@ -20,25 +25,23 @@ export interface Transcript {
   agentFiles: AgentFileRow[];
   governorState: GovernorState;
   contextTokens?: number;
+  tokenUsage: TokenUsage;
   waitingOn?: string;
+  pendingPrompt?: PendingPrompt;
   profile: Profile;
+  turnTree: TurnTree;
 }
 
-function nextWaitingOn(current: string | undefined, event: TurnEvent): string | undefined {
-  if (event.type === "waiting") return event.on;
-  if (event.type === "paused") return "Paused";
-  if (event.type === "resumed") return undefined;
-  return event.type === "turn_completed" || event.type === "turn_failed" ? undefined : current;
-}
-
-function emptyTranscript(): Transcript {
+export function emptyTranscript(): Transcript {
   return {
     messages: [],
     contextMessages: [],
     consoleEvents: [],
     agentFiles: [],
     governorState: EMPTY_GOVERNOR_STATE,
+    tokenUsage: [],
     profile: EMPTY_PROFILE,
+    turnTree: EMPTY_TURN_TREE,
   };
 }
 
@@ -112,7 +115,12 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
         ...t,
         messages: [
           ...t.messages,
-          { id: `user-${event.turnIndex}`, role: "user", content: event.prompt },
+          {
+            id: `user-${event.turnIndex}`,
+            role: "user",
+            content: event.prompt,
+            turnIndex: event.turnIndex,
+          },
         ],
         contextMessages: [...t.contextMessages, { role: "human", content: event.prompt }],
       };
@@ -132,6 +140,9 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
           },
         ],
       };
+    }
+    case "model_usage": {
+      return { ...t, tokenUsage: addModelUsage(t.tokenUsage, event) };
     }
     case "tool_result": {
       return {
@@ -169,7 +180,18 @@ function applyBody(t: Transcript, event: TurnEvent): Transcript {
       };
     }
     case "governor_action": {
-      return { ...t, governorState: applyGovernorAction(t.governorState, event.action).state };
+      const { state, result } = applyGovernorAction(t.governorState, event.action);
+      const marker = popMarkerMessage(event, result);
+      return {
+        ...t,
+        governorState: state,
+        messages: marker ? [...t.messages, marker] : t.messages,
+      };
+    }
+    case "governor_verdict": {
+      return event.phase === "exit"
+        ? { ...t, messages: [...t.messages, exitMarkerMessage(t.governorState, t.messages, event)] }
+        : t;
     }
     case "governor_tool_decision": {
       if (event.approved || !event.toolCallId) return t;
@@ -262,7 +284,9 @@ export function applyTurnEvent(t: Transcript, event: TurnEvent): Transcript {
     consoleEvents: [...next.consoleEvents, ...projectConsoleEvents(event)],
     agentFiles: applyAgentFiles(next.agentFiles, event),
     waitingOn: nextWaitingOn(next.waitingOn, event),
+    pendingPrompt: nextPendingPrompt(next.pendingPrompt, event),
     profile: applyProfileEvent(next.profile, event),
+    turnTree: applyTurnTreeEvent(next.turnTree, event),
   };
 }
 

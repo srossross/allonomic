@@ -1,5 +1,6 @@
 import type {
   Assumption,
+  Classification,
   GovernorAction,
   GovernorState,
   IntentKind,
@@ -134,6 +135,38 @@ function recordAssumption(state: GovernorState, assumption: Assumption): Governo
   };
 }
 
+function classifyAssumption(
+  state: GovernorState,
+  id: string,
+  classification: Classification
+): GovernorActionOutcome {
+  const assumption = state.assumptions.find((a) => a.id === id);
+  if (!assumption) {
+    return { state, result: { status: "not_found", message: `Assumption '${id}' not found.` } };
+  }
+  if (assumption.status !== "open") {
+    return { state, result: { status: "refused", message: `Assumption '${id}' is not open.` } };
+  }
+  const classified: Assumption = { ...assumption, ...classification };
+  return {
+    state: {
+      ...state,
+      assumptions: state.assumptions.map((a) => (a.id === id ? classified : a)),
+    },
+    result: { status: "classified", id },
+  };
+}
+
+function dropAssumption(state: GovernorState, id: string): GovernorActionOutcome {
+  if (state.assumptions.every((a) => a.id !== id)) {
+    return { state, result: { status: "not_found", message: `Assumption '${id}' not found.` } };
+  }
+  return {
+    state: { ...state, assumptions: state.assumptions.filter((a) => a.id !== id) },
+    result: { status: "dropped", id },
+  };
+}
+
 function resolveAssumption(
   state: GovernorState,
   id: string,
@@ -179,6 +212,12 @@ export function applyGovernorAction(
     }
     case "record_assumption": {
       return recordAssumption(state, action.assumption);
+    }
+    case "classify_assumption": {
+      return classifyAssumption(state, action.id, action.classification);
+    }
+    case "drop_assumption": {
+      return dropAssumption(state, action.id);
     }
     case "clear_assumptions": {
       return { state: { ...state, assumptions: [] }, result: { status: "cleared" } };

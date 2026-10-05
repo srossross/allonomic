@@ -13,6 +13,7 @@ export function streamRowCount(message: Message, toolItems: ToolItem[], isTextCo
     Number(isAssistant && Boolean(message.thinking)) +
     (isAssistant ? toolItems.length : 0) +
     Number(Boolean(message.brief)) +
+    Number(Boolean(message.governor)) +
     Number(Boolean(message.content) && isCollapsedWorkerText(message, isTextCollapsed))
   );
 }

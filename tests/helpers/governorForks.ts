@@ -9,6 +9,7 @@ const STUB_PROMPTS: Record<string, string> = {
   "preamble.md": "PREAMBLE",
   "entry.md": "ENTRY",
   "assumptions_list.md": "LIST",
+  "assumptions_record.md": "RECORD\n{{intents}}\n{{assumptions}}",
   "assumptions_classify.md": "CLASSIFY",
   "assumptions_ask.md": "ASK",
   "assumptions_decide.md": "DECIDE",

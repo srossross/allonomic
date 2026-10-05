@@ -5,6 +5,8 @@ import type { AgentInterceptor, PipelineContext } from "./types";
 import { preToolDenial, toolContent, withPostToolLessons } from "./interceptorHooks";
 import { TOOL_SOURCE } from "../turn/waiting";
 import { rethrowIfFatal } from "../tools/fatal";
+import { capToolMessage } from "../tools/toolOutputCap";
+import { forModel } from "./callIds";
 
 export function emitToolResults(sink: TurnEventSink, messages: ToolMessage[]) {
   for (const message of messages) {
@@ -78,7 +80,10 @@ async function recoverToolCall(
   );
   if (denial) return denial;
   const content = await runTool(tools, call, context);
-  const result = new ToolMessage({ content, name: call.name, tool_call_id: call.id });
+  const result = await capToolMessage(
+    new ToolMessage({ content, name: call.name, tool_call_id: call.id }),
+    context.storeToolOutput
+  );
   return await withPostToolLessons(interceptors, call, result, conversation, context);
 }
 
@@ -89,5 +94,5 @@ export async function recoverToolCalls(
   const results: ToolMessage[] = [];
   for (const call of calls) results.push(await recoverToolCall(call, pipeline));
   emitToolResults(pipeline.context.events, results);
-  return results;
+  return results.map((result, i) => forModel(result, calls[i].providerId ?? calls[i].id));
 }

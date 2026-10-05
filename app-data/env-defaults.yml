@@ -1,0 +1,13 @@
+env:
+  NO_COLOR: "1"
+  CLICOLOR: "0"
+  FORCE_COLOR: "0"
+  TERM: dumb
+  PAGER: cat
+  GIT_PAGER: cat
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: color.ui
+  GIT_CONFIG_VALUE_0: never
+  PY_COLORS: "0"
+  CARGO_TERM_COLOR: never
+  npm_config_color: "false"

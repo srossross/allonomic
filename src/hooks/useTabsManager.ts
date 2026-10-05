@@ -1,15 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   type TabData,
-  type ThinkingLevel,
-  type ExecutionMode,
   type Project,
-  AVAILABLE_MODES,
-  INITIAL_TOOLS,
-  DEFAULT_EXECUTION_MODE,
-  DEFAULT_GOVERNOR_MODE,
   DEFAULT_CHAT_TITLE,
-  GOVERNOR_MODES,
   createInitialTab,
   createNewTab,
   createSettingsTab,
@@ -21,9 +14,10 @@ import {
   runAgentPromptApi,
   stopAgentPromptApi,
 } from "@/agent/api";
+import { useBranching } from "./useBranching";
+import { useTabSettingsHandlers } from "./useTabSettingsHandlers";
 import { useTurnQueue, type StartTurn } from "./useTurnQueue";
 import { settingsToTab } from "./tabSettings";
-import type { InterceptorSettings, SettingsPatch } from "@/core/config/settings";
 import type { RecoverableCall } from "@/core/turn/events";
 import { useTabsPersistence } from "./useTabsPersistence";
 import { useTurnDispatch } from "./useTurnDispatch";
@@ -135,51 +129,7 @@ export function useTabsManager(activeProject: Project) {
     [activeTabId, persistCloseTab, activeProject]
   );
 
-  const updateActiveTab = useCallback(
-    (patch: SettingsPatch) => persistTabSettings(activeTab.id, patch),
-    [activeTab.id, persistTabSettings]
-  );
-
-  const handleSelectModel = useCallback(
-    (modelId: string) => updateActiveTab({ model: modelId }),
-    [updateActiveTab]
-  );
-  const handleSelectThinkingLevel = useCallback(
-    (level: ThinkingLevel) => updateActiveTab({ thinkingLevel: level }),
-    [updateActiveTab]
-  );
-  const handleSelectExecutionMode = useCallback(
-    (mode: ExecutionMode) => updateActiveTab({ executionMode: mode }),
-    [updateActiveTab]
-  );
-
-  const handleToggleHasNetworkAccess = useCallback(
-    () => updateActiveTab({ networkAccess: !activeTab.hasNetworkAccess }),
-    [updateActiveTab, activeTab.hasNetworkAccess]
-  );
-
-  const handleToggleTeacher = useCallback(
-    () => updateActiveTab({ teacherEnabled: !(activeTab.teacherEnabled ?? true) }),
-    [updateActiveTab, activeTab.teacherEnabled]
-  );
-
-  const handleSetInterceptorSettings = useCallback(
-    (name: string, settings: InterceptorSettings) =>
-      updateActiveTab({ interceptors: { [name]: settings } }),
-    [updateActiveTab]
-  );
-
-  const handleCycleGovernorMode = useCallback(() => {
-    const currentIndex = GOVERNOR_MODES.indexOf(activeTab.governorMode ?? DEFAULT_GOVERNOR_MODE);
-    updateActiveTab({ governorMode: GOVERNOR_MODES[(currentIndex + 1) % GOVERNOR_MODES.length] });
-  }, [updateActiveTab, activeTab.governorMode]);
-
-  const handleCycleExecutionMode = useCallback(() => {
-    const current = activeTab.executionMode || DEFAULT_EXECUTION_MODE;
-    const currentIndex = AVAILABLE_MODES.findIndex((m) => m.id === current);
-    const nextIndex = (currentIndex + 1) % AVAILABLE_MODES.length;
-    updateActiveTab({ executionMode: AVAILABLE_MODES[nextIndex].id });
-  }, [updateActiveTab, activeTab.executionMode]);
+  const settingsHandlers = useTabSettingsHandlers(activeTab, persistTabSettings);
 
   const startTurn = useCallback<StartTurn>(
     async (tab, text, onTurnEvent) => {
@@ -257,6 +207,15 @@ export function useTabsManager(activeProject: Project) {
     }
   }, [activeTab, queue]);
 
+  const { handleRewind, handleSwitchBranch, handleFork } = useBranching({
+    activeTab,
+    projectPath,
+    tabsRef,
+    setTabs,
+    setActiveTabId,
+    persistTabSwitch,
+  });
+
   const handleRetry = useCallback(() => recoverTab(activeTab, []), [recoverTab, activeTab]);
 
   const handleSettingsSaved = useCallback(async () => {
@@ -282,22 +241,6 @@ export function useTabsManager(activeProject: Project) {
     [activeTab.id]
   );
 
-  const handleToggleTool = useCallback(
-    (toolName: string) => {
-      const current = activeTab.enabledTools || INITIAL_TOOLS;
-      updateActiveTab({ tools: { [toolName]: !current.includes(toolName) } });
-    },
-    [updateActiveTab, activeTab.enabledTools]
-  );
-
-  const handleSetAllTools = useCallback(
-    (isEnabled: boolean) =>
-      updateActiveTab({
-        tools: Object.fromEntries(INITIAL_TOOLS.map((name) => [name, isEnabled])),
-      }),
-    [updateActiveTab]
-  );
-
   return {
     tabs,
     activeTabId,
@@ -305,14 +248,7 @@ export function useTabsManager(activeProject: Project) {
     setActiveTabId: handleSelectTab,
     handleNewTab,
     handleCloseTab,
-    handleSelectModel,
-    handleSelectThinkingLevel,
-    handleSelectExecutionMode,
-    handleCycleExecutionMode,
-    handleToggleHasNetworkAccess,
-    handleToggleTeacher,
-    handleSetInterceptorSettings,
-    handleCycleGovernorMode,
+    ...settingsHandlers,
     handleSendMessage,
     handleStopMessage,
     handlePause,
@@ -320,10 +256,11 @@ export function useTabsManager(activeProject: Project) {
     handleRemoveQueued,
     handlePopQueued,
     handleRetry,
+    handleRewind,
+    handleSwitchBranch,
+    handleFork,
     handleClearConsole,
     handleToggleContext,
-    handleToggleTool,
-    handleSetAllTools,
     handleSettingsSaved,
   };
 }

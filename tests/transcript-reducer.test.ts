@@ -170,6 +170,56 @@ describe("transcript reducer", () => {
       "resolve_assumption: 'r1' — user confirmed"
     );
   });
+
+  it("tracks a pending prompt that has no tool call until it is answered", () => {
+    const { sink, events } = createTurnEventLog(1, []);
+    const assumptionPrompt = {
+      kind: "assumptions" as const,
+      label: "Confirm 1 assumption",
+      questions: [{ id: "a1", topic: "X", label: "We assumed: x", options: [] }],
+    };
+    sink.emit({ type: "prompt_requested", promptId: "p9", prompt: assumptionPrompt });
+    expect(foldTurnEvents(events).pendingPrompt).toEqual({
+      promptId: "p9",
+      prompt: assumptionPrompt,
+    });
+    sink.emit({ type: "prompt_answered", promptId: "p9", value: true });
+    expect(foldTurnEvents(events).pendingPrompt).toBeUndefined();
+  });
+
+  it("adds one governor marker per exit and one per popped intent", () => {
+    const { sink, events } = createTurnEventLog(1, []);
+    const emit = (action: GovernorAction) =>
+      sink.emit({ type: "governor_action", phase: "exit", interceptor: "Governor", action });
+    const verdict = (isApproved: boolean, intentId?: string) =>
+      sink.emit({
+        type: "governor_verdict",
+        phase: "exit",
+        interceptor: "Governor",
+        approved: isApproved,
+        intentId,
+      });
+    emit({
+      type: "push_intent",
+      intent: { id: "i1", kind: "request", description: "add a box", completed_when: "box added" },
+    });
+    emit({ type: "push_intent", intent: { id: "i2", kind: "request", description: "paint it" } });
+    emit({ type: "record_assumption", assumption: assumption("r1", "i1") });
+    verdict(false, "i1");
+    emit({ type: "pop_intent" });
+    emit({ type: "resolve_intent", id: "i1" });
+    verdict(true);
+    verdict(true);
+
+    const markers = foldTurnEvents(events).messages.map((m) => m.governor);
+    const exit = { kind: "exit", interceptor: "Governor", assumptions: [assumption("r1", "i1")] };
+    expect(markers).toEqual([
+      { ...exit, approved: false, resolved: [], unmetIntent: "add a box" },
+      { kind: "popped", interceptor: "Governor", intent: "paint it" },
+      { ...exit, approved: true, resolved: [{ id: "i1", text: "box added" }] },
+      { ...exit, approved: true, resolved: [] },
+    ]);
+  });
 });
 
 function preamble(loadedAt: string, isMissing = false) {

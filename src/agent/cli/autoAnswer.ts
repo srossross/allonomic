@@ -10,7 +10,9 @@ export function isYesFlag(cliArguments: string[]): boolean {
 
 export function autoAnswer(prompt: UserPrompt, isYes: boolean): UserPromptValue {
   if (prompt.kind === "confirm") return isYes;
-  if (isYes && prompt.kind === "assumption") return true;
+  if (isYes && prompt.kind === "assumptions") {
+    return Object.fromEntries(prompt.questions.map((q) => [q.id, true]));
+  }
   throw new Error(`--yes/--no cannot answer a ${prompt.kind} prompt: ${prompt.label}`);
 }
 

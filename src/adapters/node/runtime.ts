@@ -45,8 +45,13 @@ function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
   }
 }
 
-const spawnProcess: Shell["spawn"] = async (program, args, { cwd, onOutput }) => {
-  const child = spawn(program, args, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+const spawnProcess: Shell["spawn"] = async (program, args, { cwd, env, onOutput }) => {
+  const child = spawn(program, args, {
+    cwd,
+    env: env && { ...process.env, ...env },
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   child.stdout.on("data", (chunk) => onOutput("stdout", String(chunk)));
   child.stderr.on("data", (chunk) => onOutput("stderr", String(chunk)));
   const exited = new Promise<number | null>((resolve) => {

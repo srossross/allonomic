@@ -61,10 +61,10 @@ function AssumptionDetail({
       <div className="text-muted-foreground text-2xs flex flex-wrap items-center gap-1.5">
         <span className="font-mono">{assumption.id}</span>
         <Chip>{assumption.status}</Chip>
-        <Chip>{assumption.resolver}</Chip>
-        <Chip>{assumption.impact_category}</Chip>
-        <Chip>candidates: {assumption.candidates}</Chip>
-        <Chip>cost: {assumption.impact_cost}</Chip>
+        {assumption.resolver && <Chip>{assumption.resolver}</Chip>}
+        {assumption.impact_category && <Chip>{assumption.impact_category}</Chip>}
+        {assumption.candidates && <Chip>candidates: {assumption.candidates}</Chip>}
+        {assumption.impact_cost && <Chip>cost: {assumption.impact_cost}</Chip>}
         {assumption.user_would_care !== null && (
           <Chip>{assumption.user_would_care ? "user would care" : "user would not care"}</Chip>
         )}

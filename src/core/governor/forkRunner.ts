@@ -11,6 +11,7 @@ import { buildInterceptorInstructions, loadPromptFile, type PromptSection } from
 import { loadRuleFiles, ruleSections, toContextFiles } from "../contextFiles";
 import { messageText, thinkingConfigFor } from "../graph/thinking";
 import type { ContextFileHook } from "../turn/events";
+import { emitModelUsage, interceptorAgent } from "../turn/usage";
 
 type ForkPhase = "entry" | "exit";
 
@@ -46,6 +47,14 @@ export interface ForkRequest<T> {
   unknownTool?: (name: string) => string;
   phase: ForkPhase;
   appendix?: string;
+  sections?: PromptSection[];
+}
+
+export interface StandaloneRequest<T> extends Omit<
+  ForkRequest<T>,
+  "conversation" | "appendix" | "sections"
+> {
+  vars: Record<string, string>;
 }
 
 export interface ListRequest {
@@ -63,6 +72,10 @@ export class GovernorForkRunner {
     this.modelName = options.modelName;
   }
 
+  private usageAgent(phase: ForkPhase, promptFile: string): string {
+    return interceptorAgent(`${this.options.name}/${phase}/${promptFile.replace(/\.md$/, "")}`);
+  }
+
   private createModel(tools: StructuredTool[]): GovernorModel {
     if (this.options.createModel) return this.options.createModel(tools);
     if (!this.options.apiKey) throw new Error("Missing Gemini API key for Governor");
@@ -75,12 +88,46 @@ export class GovernorForkRunner {
     return tools.length > 0 ? model.bindTools(tools) : model;
   }
 
+  private async loop<T>(
+    request: Omit<ForkRequest<T>, "conversation">,
+    conversation: BaseMessage[],
+    prompt: BaseMessage[]
+  ): Promise<{ decided: T; scratchpad: BaseMessage[] }> {
+    const { context, promptFile, tools, decision, nudge, unknownTool, phase } = request;
+    const { name } = this.options;
+    const scratchpad: BaseMessage[] = [...conversation, ...prompt];
+    try {
+      return await loopFork({
+        scratchpad,
+        label: `${name} · ${promptFile}`,
+        model: this.createModel(tools),
+        modelName: this.modelName,
+        usageAgent: this.usageAgent(phase, promptFile),
+        tools,
+        decision,
+        nudge,
+        unknownTool,
+        sessionId: context.sessionId,
+        waiting: { events: context.events, source: name, hook: PHASE_INTERCEPTOR_HOOK[phase] },
+      });
+    } finally {
+      context.events.emit({
+        type: "governor_fork",
+        interceptor: name,
+        phase,
+        pass: promptFile,
+        messages: toForkMessages(scratchpad.slice(conversation.length + prompt.length)),
+      });
+    }
+  }
+
   async list(request: ListRequest): Promise<{ text: string; scratchpad: BaseMessage[] }> {
     const { context, conversation, promptFile, phase } = request;
     const template = await loadPromptFile(this.options.runtime, promptFile);
     const scratchpad = [...conversation, new HumanMessage(template.text)];
     const model = this.createModel([]);
     const response = await invokeWithRetry(() => model.invoke(scratchpad));
+    emitModelUsage(context.events, this.usageAgent(phase, promptFile), this.modelName, response);
     scratchpad.push(response);
     const text = messageText(response.content);
     context.events.emit({
@@ -96,19 +143,24 @@ export class GovernorForkRunner {
     return { text, scratchpad };
   }
 
+  async runStandalone<T>(
+    request: StandaloneRequest<T>
+  ): Promise<{ decided: T; scratchpad: BaseMessage[] }> {
+    const { context, promptFile, phase, vars } = request;
+    const template = await loadPromptFile(this.options.runtime, promptFile);
+    context.events.emit({
+      type: "context_files_loaded",
+      agent: "governor",
+      hook: PHASE_HOOK[phase],
+      files: toContextFiles([template]),
+    });
+    const text = template.text.replaceAll(/{{(\w+)}}/g, (match, key: string) => vars[key] ?? match);
+    return this.loop(request, [], [new HumanMessage(text)]);
+  }
+
   async run<T>(request: ForkRequest<T>): Promise<{ decided: T; scratchpad: BaseMessage[] }> {
-    const {
-      context,
-      conversation,
-      promptFile,
-      tools,
-      decision,
-      nudge,
-      unknownTool,
-      phase,
-      appendix,
-    } = request;
-    const { runtime, name, getIntents, getSections } = this.options;
+    const { context, conversation, promptFile, phase, appendix, sections } = request;
+    const { runtime, getIntents, getSections } = this.options;
     const [preamble, template, rules] = await Promise.all([
       loadPromptFile(runtime, "preamble.md"),
       loadPromptFile(runtime, promptFile),
@@ -120,37 +172,14 @@ export class GovernorForkRunner {
       hook: PHASE_HOOK[phase],
       files: toContextFiles([preamble, template, ...rules]),
     });
-    const scratchpad: BaseMessage[] = [
-      ...conversation,
-      new HumanMessage(
-        buildInterceptorInstructions(
-          preamble.text,
-          [template.text, ...ruleSections(rules)].join("\n\n"),
-          getIntents(),
-          getSections()
-        ) + (appendix ? `\n${appendix}` : "")
-      ),
-    ];
-    try {
-      return await loopFork({
-        scratchpad,
-        label: `${name} · ${promptFile}`,
-        model: this.createModel(tools),
-        tools,
-        decision,
-        nudge,
-        unknownTool,
-        sessionId: context.sessionId,
-        waiting: { events: context.events, source: name, hook: PHASE_INTERCEPTOR_HOOK[phase] },
-      });
-    } finally {
-      context.events.emit({
-        type: "governor_fork",
-        interceptor: name,
-        phase,
-        pass: promptFile,
-        messages: toForkMessages(scratchpad.slice(conversation.length + 1)),
-      });
-    }
+    const instructions = new HumanMessage(
+      buildInterceptorInstructions(
+        preamble.text,
+        [template.text, ...ruleSections(rules)].join("\n\n"),
+        getIntents(),
+        sections ?? getSections()
+      ) + (appendix ? `\n${appendix}` : "")
+    );
+    return this.loop(request, conversation, [instructions]);
   }
 }

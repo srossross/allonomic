@@ -19,6 +19,7 @@ import { ToolsTab } from "./ToolsTab";
 import { InjectorsTab } from "./InjectorsTab";
 import { ProfileTab } from "./ProfileTab";
 import { EMPTY_PROFILE, type Profile } from "@/core/turn/profile";
+import type { TokenUsage } from "@/core/turn/usage";
 import { AgentFilesTab } from "./AgentFilesTab";
 import { ConsoleTab } from "./ConsoleTab";
 import { SessionTab } from "./SessionTab";
@@ -51,6 +52,7 @@ export interface IntentsPanelProps {
   onSetInterceptorSettings?: (name: string, settings: InterceptorSettings) => void;
   messages?: Message[];
   profile?: Profile;
+  tokenUsage?: TokenUsage;
 }
 
 export function IntentsPanel({
@@ -75,6 +77,7 @@ export function IntentsPanel({
   onSetInterceptorSettings,
   messages,
   profile = EMPTY_PROFILE,
+  tokenUsage,
 }: IntentsPanelProps) {
   const isGovernorOff = governorMode === "off";
   const { interceptors, error: interceptorsError } = useInterceptors(
@@ -277,6 +280,8 @@ export function IntentsPanel({
             executionMode={executionMode}
             intentStack={intentStack}
             messages={messages}
+            tokenUsage={tokenUsage}
+            models={models}
           />
         )}
       </div>

@@ -65,8 +65,9 @@ describe("askUser in the runner", () => {
     const requested = events.find(
       (e): e is TurnEventOf<"prompt_requested"> => e.type === "prompt_requested"
     );
+    const step = events.find((e): e is TurnEventOf<"model_step"> => e.type === "model_step");
     expect(requested).toMatchObject({
-      toolCallId: "c1",
+      toolCallId: step?.toolCalls[0].id,
       prompt: { kind: "confirm", label: "make" },
     });
     expect(events.map((e) => e.type)).toContain("prompt_answered");

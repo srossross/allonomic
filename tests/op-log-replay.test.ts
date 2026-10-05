@@ -15,10 +15,12 @@ const READ = "shell_1_project_read_only";
 const teacher: AgentInterceptor = {
   name: "ToolTeacher",
   async onPreToolCall(call) {
-    return call.id === "c1" ? { approved: false, reason: "not that" } : { approved: true };
+    return call.args.command === "rm x"
+      ? { approved: false, reason: "not that" }
+      : { approved: true };
   },
   async onPostToolCall(call) {
-    return call.id === "c2" ? "LESSON" : undefined;
+    return call.args.command === "ls" ? "LESSON" : undefined;
   },
 };
 
@@ -50,7 +52,7 @@ describe("op-log replay", () => {
         },
       },
       { name: "finish" },
-      { name: "returnToWorkerWithUnmetIntent", args: { why: "not listed" } },
+      { name: "returnToWorkerWithUnmetIntent", args: { intent_id: "i1", why: "not listed" } },
       { name: "resolve_intent", args: { id: "i1" } },
       { name: "atLeastOneIntentWasSatisfied" },
     ]);

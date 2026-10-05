@@ -6,6 +6,7 @@ what counts as in scope, and what output format was chosen.
 Facts discovered from tool output are not assumptions.
 
 Prefix each item:
+
 - [resolved] only if the user's own words or a tool result in the conversation confirm it. Quote that evidence.
 - [open] otherwise, including any choice made on the user's behalf.
 

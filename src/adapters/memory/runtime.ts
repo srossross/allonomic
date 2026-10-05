@@ -71,7 +71,12 @@ export class MemoryFileStore implements FileStore {
 
 export class ScriptedShell implements Shell {
   readonly calls: Array<{ program: string; args: string[]; options?: ShellOptions }> = [];
-  readonly spawned: Array<{ program: string; args: string[]; process: ScriptedProcess }> = [];
+  readonly spawned: Array<{
+    program: string;
+    args: string[];
+    env?: Record<string, string>;
+    process: ScriptedProcess;
+  }> = [];
   constructor(
     private readonly handler: (
       program: string,
@@ -100,7 +105,7 @@ export class ScriptedShell implements Shell {
   async spawn(program: string, args: string[], options: SpawnOptions): Promise<ShellProcess> {
     const child = new ScriptedProcess(options);
     this.calls.push({ program, args, options: { cwd: options.cwd } });
-    this.spawned.push({ program, args, process: child });
+    this.spawned.push({ program, args, env: options.env, process: child });
     if (this.isReplayingSpawns) void this.replay(child, program, args, options.cwd);
     return child;
   }

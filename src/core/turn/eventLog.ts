@@ -41,6 +41,7 @@ export function createTurnEventLog(
 
   const createScope = (
     parent: TurnEventSink,
+    adoptIntoParent: (adopted: TurnEvent[]) => void,
     name: string,
     { phase, toolCallId }: ScopeOptions = {}
   ): ScopedSink => {
@@ -48,17 +49,22 @@ export function createTurnEventLog(
     const buffered: TurnEvent[] = [];
     const startedAt = Date.now();
     let isClosed = false;
+    const adopt = (adopted: TurnEvent[]) => {
+      buffered.push(...adopted);
+    };
     const scoped: ScopedSink = {
       emit(body) {
         if (isClosed) throw new Error(`${actor} emitted ${body.type} after its scope closed`);
         buffered.push(record(body, actor));
       },
-      scope: (childName, options) => createScope(scoped, childName, options),
+      scope: (childName, options) => createScope(scoped, adopt, childName, options),
       close({ collapse = false } = {}) {
         if (isClosed) return;
         isClosed = true;
         open.delete(scoped);
         if (collapse && buffered.every((event) => !isOpEvent(event))) {
+          const usage = buffered.filter((event) => event.type === "model_usage");
+          if (usage.length > 0) adoptIntoParent(usage);
           parent.emit({
             type: "interceptor_passed",
             interceptor: name,
@@ -79,7 +85,13 @@ export function createTurnEventLog(
     emit(body) {
       onSegment({ actor: WORKER_ACTOR, isScope: false, events: [record(body, WORKER_ACTOR)] });
     },
-    scope: (name, options) => createScope(sink, name, options),
+    scope: (name, options) =>
+      createScope(
+        sink,
+        (adopted) => onSegment({ actor: WORKER_ACTOR, isScope: false, events: adopted }),
+        name,
+        options
+      ),
   };
 
   return {

@@ -8,6 +8,7 @@ import {
 import type { StructuredTool } from "@langchain/core/tools";
 import { invokeWithRetry } from "../retry";
 import { invokeWaiting, type WaitingTarget } from "../turn/waiting";
+import { emitModelUsage, interceptorAgent } from "../turn/usage";
 import { sanitizeMessagesForModel } from "../graph/thinking";
 import { createLogger } from "../log";
 
@@ -23,6 +24,8 @@ export interface ForkLoopOptions<T> {
   scratchpad: BaseMessage[];
   label: string;
   model: GovernorModel;
+  modelName: string;
+  usageAgent?: string;
   tools: StructuredTool[];
   decision: () => T | null;
   nudge?: string;
@@ -39,6 +42,8 @@ export async function loopFork<T>({
   scratchpad,
   label,
   model,
+  modelName,
+  usageAgent,
   tools,
   decision,
   nudge,
@@ -61,6 +66,13 @@ export async function loopFork<T>({
     const response = await (waiting
       ? invokeWaiting(waiting, label, invoke)
       : invokeWithRetry(invoke));
+    if (waiting)
+      emitModelUsage(
+        waiting.events,
+        usageAgent ?? interceptorAgent(waiting.source),
+        modelName,
+        response
+      );
     log.debug(
       {
         label,

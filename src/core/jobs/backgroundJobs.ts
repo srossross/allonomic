@@ -21,6 +21,7 @@ export interface JobInfo extends JobSpec {
   exitCode: number | null;
   startedAt: number;
   logPath: string;
+  toolCallId?: string;
 }
 
 export interface JobSnapshot {
@@ -42,6 +43,7 @@ export interface JobLaunch {
   args: string[];
   cwd: string;
   logDir: string;
+  env?: Record<string, string>;
 }
 
 export type JobLauncher = (spec: JobSpec) => Promise<JobLaunch>;
@@ -99,7 +101,7 @@ export class BackgroundJobs {
     private readonly store?: JobStore
   ) {}
 
-  private register(spec: JobSpec, logDir: string): Job {
+  private register(spec: JobSpec, logDir: string, toolCallId?: string): Job {
     const id = `job-${this.nextId++}`;
     const logPath = join(logDir, `${id}.log`);
     const job: Job = {
@@ -110,6 +112,7 @@ export class BackgroundJobs {
         exitCode: null,
         startedAt: Date.now(),
         logPath,
+        ...(toolCallId && { toolCallId }),
       },
       output: "",
       logging: this.createLog(logDir, logPath),
@@ -186,9 +189,10 @@ export class BackgroundJobs {
     spec: JobSpec,
     process: ShellProcess,
     output: string,
-    logDir: string
+    logDir: string,
+    toolCallId?: string
   ): { info: JobInfo; append: (text: string) => void } {
-    const job = this.register(spec, logDir);
+    const job = this.register(spec, logDir, toolCallId);
     job.process = process;
     this.append(job, output);
     void this.persist();
@@ -196,13 +200,14 @@ export class BackgroundJobs {
     return { info: { ...job.info }, append: (text) => this.append(job, text) };
   }
 
-  async start(spec: JobSpec): Promise<JobInfo> {
+  async start(spec: JobSpec, toolCallId?: string): Promise<JobInfo> {
     await this.restore();
-    const { program, args, cwd, logDir } = await this.launch(spec);
-    const job = this.register(spec, logDir);
+    const { program, args, cwd, logDir, env } = await this.launch(spec);
+    const job = this.register(spec, logDir, toolCallId);
     try {
       job.process = await this.shell.spawn(program, args, {
         cwd,
+        env,
         onOutput: (_stream, text) => this.append(job, text),
       });
     } catch (error) {
@@ -234,6 +239,13 @@ export class BackgroundJobs {
 
   read(id: string): JobSnapshot | undefined {
     const job = this.jobs.get(id);
+    return job && { info: { ...job.info }, output: job.output };
+  }
+
+  findJob(idOrToolCallId: string): JobSnapshot | undefined {
+    let job = this.jobs.get(idOrToolCallId);
+    for (const candidate of this.jobs.values())
+      if (candidate.info.toolCallId === idOrToolCallId) job ??= candidate;
     return job && { info: { ...job.info }, output: job.output };
   }
 

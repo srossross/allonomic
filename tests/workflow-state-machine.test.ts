@@ -27,7 +27,8 @@ function build(
     new ToolNode(tools),
     new MemorySaver(),
     options.interceptors ?? [],
-    "system"
+    "system",
+    "test-model"
   );
   return { compiled, model, log };
 }
@@ -85,10 +86,24 @@ describe("workflow state machine", () => {
       "waiting",
       "model_step",
     ]);
+    const step = recorded.events[1];
+    const call = step.type === "model_step" ? step.toolCalls[0] : undefined;
+    expect(call?.providerId).toBe("c1");
     const toolResult = recorded.events[3];
     expect(
       toolResult.type === "tool_result" && [toolResult.toolCallId, toolResult.content]
-    ).toEqual(["c1", "ran ls"]);
+    ).toEqual([call?.id, "ran ls"]);
+  });
+
+  it("runs a call whose provider id repeats an earlier call's", async () => {
+    const { compiled, log } = build([
+      { toolCalls: [toolCall("run_read_only_command", { command: "ls" }, "c1")] },
+      { toolCalls: [toolCall("run_read_only_command", { command: "pwd" }, "c1")] },
+      "done",
+    ]);
+    const result = await invoke(compiled, { messages: [new HumanMessage("list")] });
+    expect(types(result.messages)).toEqual(["human", "ai", "tool", "ai", "tool", "ai"]);
+    expect(log).toEqual(["read:ls", "read:pwd"]);
   });
 
   it("askUser: an accepted prompt runs the tool and the agent continues in the same invoke", async () => {
@@ -100,7 +115,9 @@ describe("workflow state machine", () => {
     const result = await invoke(compiled, { messages: [new HumanMessage("delete")] });
     expect(types(result.messages)).toEqual(["human", "ai", "tool", "ai"]);
     expect(log).toEqual(["mutate:rm x"]);
-    expect(asked).toEqual([{ prompt: { kind: "confirm", label: "rm x" }, toolCallId: "c1" }]);
+    const step = recorded.events.find((e) => e.type === "model_step");
+    const callId = step?.type === "model_step" ? step.toolCalls[0].id : undefined;
+    expect(asked).toEqual([{ prompt: { kind: "confirm", label: "rm x" }, toolCallId: callId }]);
   });
 
   it("askUser: a declined prompt rejects and the agent continues without the tool running", async () => {

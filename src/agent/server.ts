@@ -47,13 +47,17 @@ async function replayStoredSession(workspaceDir: string, sessionId: string) {
     const replay = await replaySession(tauriRuntime.fs, sessionDirFor(workspaceDir, sessionId));
     return {
       replay: {
-        governorState: replayGovernorState(replay.events),
+        governorState: replayGovernorState(replay.activeEvents),
         nextTurnIndex: replay.nextTurnIndex,
       },
     };
   } catch (error) {
     return { warnings: [{ source: "session replay (started fresh)", error }] };
   }
+}
+
+export function findAgentInstance(workspaceDir: string, sessionId: string) {
+  return runnersMap.get(getSessionKey(workspaceDir, sessionId));
 }
 
 async function getAgentInstance(workspaceDir?: string, sessionId?: string): Promise<AgentInstance> {

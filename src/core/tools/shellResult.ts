@@ -1,7 +1,9 @@
 import type { ShellTermination } from "../ports";
 
 const FOOTER =
-  /^([\s\S]*?)\n?\[(?:exit (-?\d+|killed)|(stopped by user|timed out|moved to background as job-\d+)) in (\d+)ms(?:; output in [^\]\n]+)?\](?=$|\n\n\[)/;
+  /^([\s\S]*?)\n?\[(?:exit (-?\d+|killed)|(stopped by user|timed out|moved to background as job-\d+)) in (\d+)ms(?:; (?:full )?output in [^\]\n]+)?\](?=$|\n\n\[)/;
+
+const TRAILING_FOOTER = /\[([^\]\n]* in \d+ms(?:; [^\]\n]*)?)\]$/;
 
 const TERMINATION_LABELS: Record<ShellTermination, string> = {
   stopped: "stopped by user",
@@ -41,6 +43,25 @@ export function formatBackgroundedResult(
   durationMs: number
 ): string {
   return `${shellBody(stdout, stderr)}\n[${BACKGROUND_LABEL}${id} in ${Math.round(durationMs)}ms; output in ${logPath}]`;
+}
+
+export function withFullOutputPath(content: string, path: string): string {
+  const note = `full output in ${path}`;
+  return TRAILING_FOOTER.test(content)
+    ? content.replace(TRAILING_FOOTER, (_, footer: string) => `[${footer}; ${note}]`)
+    : `${content}\n[${note}]`;
+}
+
+export function splitShellFooter(content: string): { body: string; footer?: string } {
+  const index = content.lastIndexOf("\n");
+  const last = content.slice(index + 1);
+  return /^\[[^\]\n]*\]$/.test(last)
+    ? { body: index === -1 ? "" : content.slice(0, index), footer: last }
+    : { body: content };
+}
+
+export function formatStoredView(header: string, body: string, footer?: string): string {
+  return [header, body, footer].filter((part) => part !== undefined).join("\n");
 }
 
 function parseExitCode(code: string | undefined, label: string | undefined) {

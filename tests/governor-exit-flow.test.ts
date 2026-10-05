@@ -7,7 +7,7 @@ import {
 import { requiresToolCheck, shouldAskUser } from "../src/core/governor/assumptionRules";
 import { GovernorInterceptor } from "../src/core/governor/interceptor";
 import { createMemoryRuntime } from "../src/adapters/memory/runtime";
-import type { UserPromptValue } from "../src/types/tools";
+import type { PromptAnswer, UserPrompt } from "../src/types/tools";
 import { localGovernor, recordingContext } from "./helpers/turnContext";
 import { assumption, parse } from "./helpers/governorFixtures";
 
@@ -16,14 +16,15 @@ const intentA = { id: "itnt_a", kind: "request" as const, description: "Summariz
 describe("assumption rules", () => {
   it.each([
     [{}, false],
-    [{ candidates: "countable" as const }, true],
-    [{ candidates: "open" as const }, true],
+    [{ candidates: "countable" as const }, false],
+    [{ candidates: "open" as const }, false],
+    [{ candidates: "countable" as const, user_would_care: false }, false],
     [{ impact_cost: "high" as const }, true],
     [{ user_would_care: true }, true],
-    [{ candidates: "countable" as const, impact_category: "response_text" as const }, false],
-    [{ candidates: "countable" as const, resolver: "tool" as const }, false],
-    [{ candidates: "countable" as const, status: "resolved" as const }, false],
-    [{ candidates: "countable" as const, depends_on: "a0" }, false],
+    [{ impact_cost: "high" as const, impact_category: "response_text" as const }, false],
+    [{ impact_cost: "high" as const, resolver: "tool" as const }, false],
+    [{ impact_cost: "high" as const, status: "resolved" as const }, false],
+    [{ impact_cost: "high" as const, depends_on: "a0" }, false],
   ])("shouldAskUser(%o) is %p", (overrides, expected) => {
     expect(shouldAskUser(assumption("a1", "i", overrides))).toBe(expected);
   });
@@ -40,58 +41,59 @@ describe("assumption rules", () => {
 });
 
 describe("assumption tools", () => {
-  it("ask_user resolves a confirmed assumption and refuses unlisted or repeated ids", async () => {
+  it("ask_user asks every listed assumption in one prompt and refuses unlisted or repeated ids", async () => {
     const governor = localGovernor({
       intent_stack: [intentA],
       completed_intents: [],
       resolved_since_prompt: [],
-      assumptions: [assumption("a1", "itnt_a", { text: "the PR is #4" })],
+      assumptions: [
+        assumption("a1", "itnt_a", { text: "the PR is #4" }),
+        assumption("a2", "itnt_a", { text: "the repo is main" }),
+      ],
     });
-    const labels: string[] = [];
-    const answers = new Map<string, UserPromptValue>();
+    const prompts: UserPrompt[] = [];
+    const answers = new Map<string, PromptAnswer>();
     const [askUser] = createAskTools(
       governor.dispatch,
       governor.state,
-      new Set(["a1"]),
+      new Set(["a1", "a2"]),
       async (prompt) => {
-        labels.push(prompt.label);
-        return true;
+        prompts.push(prompt);
+        return { a1: true, a2: "the repo is dev" };
       },
       answers
     );
 
-    expect(parse(await askUser.invoke({ assumption_id: "a2" })).status).toBe("refused");
-    expect(parse(await askUser.invoke({ assumption_id: "a1" })).status).toBe("resolved");
-    expect(parse(await askUser.invoke({ assumption_id: "a1" })).status).toBe("refused");
-    expect(labels).toEqual(["We assumed: the PR is #4"]);
-    expect(governor.state().assumptions[0]).toMatchObject({
-      status: "resolved",
-      evidence: "user confirmed",
-    });
-  });
-
-  it("ask_user keeps a changed assumption open and records the answer", async () => {
-    const governor = localGovernor({
-      intent_stack: [intentA],
-      completed_intents: [],
-      resolved_since_prompt: [],
-      assumptions: [assumption("a1", "itnt_a")],
-    });
-    const answers = new Map<string, UserPromptValue>();
-    const [askUser] = createAskTools(
-      governor.dispatch,
-      governor.state,
-      new Set(["a1"]),
-      async () => "PR #7",
-      answers
+    const result = parse(
+      await askUser.invoke({
+        questions: [
+          { assumption_id: "a1", topic: "PR" },
+          { assumption_id: "a2", topic: "Repo", options: ["dev"] },
+          { assumption_id: "a3", topic: "Other" },
+        ],
+      })
     );
+    expect(result.a1.status).toBe("resolved");
+    expect(result.a2).toEqual({ status: "changed", answer: "the repo is dev" });
+    expect(result.a3.status).toBe("refused");
+    expect(prompts).toEqual([
+      {
+        kind: "assumptions",
+        label: "Confirm 2 assumptions",
+        questions: [
+          { id: "a1", topic: "PR", label: "We assumed: the PR is #4", options: [] },
+          { id: "a2", topic: "Repo", label: "We assumed: the repo is main", options: ["dev"] },
+        ],
+      },
+    ]);
+    expect(answers.get("a2")).toBe("the repo is dev");
+    expect(governor.state().assumptions.map((a) => a.status)).toEqual(["resolved", "open"]);
 
-    expect(parse(await askUser.invoke({ assumption_id: "a1", options: ["PR #7"] }))).toEqual({
-      status: "changed",
-      answer: "PR #7",
-    });
-    expect(answers.get("a1")).toBe("PR #7");
-    expect(governor.state().assumptions[0].status).toBe("open");
+    const repeated = parse(
+      await askUser.invoke({ questions: [{ assumption_id: "a1", topic: "PR" }] })
+    );
+    expect(repeated.a1.status).toBe("refused");
+    expect(prompts).toHaveLength(1);
   });
 
   it("decide tools resolve intents and signal the first decision only", async () => {
@@ -109,10 +111,16 @@ describe("assumption tools", () => {
 
     expect(parse(await byName("resolve_intent").invoke({ id: "itnt_a" })).status).toBe("resolved");
     await byName("atLeastOneIntentWasSatisfied").invoke({});
-    await byName("returnToWorkerWithUnmetIntent").invoke({ why: "nothing done" });
+    await byName("returnToWorkerWithUnmetIntent").invoke({
+      intent_id: "itnt_a",
+      why: "nothing done",
+    });
 
     expect(governor.state().completed_intents.map((i) => i.id)).toEqual(["itnt_a"]);
-    expect(decisions).toEqual([{ kind: "approve" }, { kind: "unmet_intent", why: "nothing done" }]);
+    expect(decisions).toEqual([
+      { kind: "approve" },
+      { kind: "unmet_intent", why: "nothing done", intentId: "itnt_a" },
+    ]);
   });
 
   it("onAgentFinish automatically permits finish if intent stack is empty", async () => {

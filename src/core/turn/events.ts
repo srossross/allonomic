@@ -7,6 +7,7 @@ const settingsChangesSchema = z.record(z.unknown());
 
 const toolCallRequestSchema = z.object({
   id: z.string(),
+  providerId: z.string().optional(),
   name: z.string(),
   args: argsSchema,
   thoughtSignature: z.string().optional(),
@@ -21,7 +22,14 @@ const phaseSchema = z.enum(["entry", "exit"]);
 const optionalString = z.string().optional();
 const stringListSchema = z.array(z.string());
 const choiceOptionSchema = z.object({ value: z.string(), label: z.string() });
-const promptValueSchema = z.union([z.boolean(), z.string()]);
+const promptAnswerSchema = z.union([z.boolean(), z.string()]);
+const promptValueSchema = z.union([promptAnswerSchema, z.record(promptAnswerSchema)]);
+const assumptionQuestionSchema = z.object({
+  id: z.string(),
+  topic: z.string(),
+  label: z.string(),
+  options: stringListSchema,
+});
 
 const modeSchema = z.enum(["restricted", "read", "write", "god"]).optional();
 
@@ -41,7 +49,11 @@ const userPromptSchema = z.discriminatedUnion("kind", [
     options: z.array(choiceOptionSchema),
   }),
   z.object({ kind: z.literal("text"), label: z.string(), placeholder: optionalString }),
-  z.object({ kind: z.literal("assumption"), label: z.string(), options: stringListSchema }),
+  z.object({
+    kind: z.literal("assumptions"),
+    label: z.string(),
+    questions: z.array(assumptionQuestionSchema),
+  }),
 ]);
 
 const governorForkMessageSchema = z.discriminatedUnion("role", [
@@ -100,11 +112,25 @@ const turnEventBodySchema = z.discriminatedUnion("type", [
     inputTokens: z.number().optional(),
   }),
   z.object({
+    type: z.literal("model_usage"),
+    agent: z.string().optional(),
+    model: z.string(),
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+  }),
+  z.object({
     type: z.literal("tool_result"),
     toolCallId: z.string(),
     name: z.string(),
     content: z.string(),
     status: z.enum(["success", "error"]).optional(),
+  }),
+  z.object({
+    type: z.literal("tool_output_stored"),
+    toolCallId: z.string(),
+    path: z.string(),
+    chars: z.number(),
+    lines: z.number(),
   }),
   z.object({
     type: z.literal("prompt_requested"),
@@ -129,6 +155,7 @@ const turnEventBodySchema = z.discriminatedUnion("type", [
     interceptor: z.string(),
     approved: z.boolean(),
     feedback: z.string().optional(),
+    intentId: z.string().optional(),
     nextStep: z.string().optional(),
     reasoning: z.string().optional(),
   }),
@@ -184,6 +211,7 @@ const turnEventBodySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("resumed") }),
   z.object({ type: z.literal("prompt_delivered"), queueId: z.string(), text: z.string() }),
   z.object({ type: z.literal("warning"), source: z.string(), message: z.string() }),
+  z.object({ type: z.literal("rewound"), head: z.number().nullable() }),
   z.object({ type: z.literal("turn_completed"), retries: z.number(), finalResponse: z.string() }),
   z.object({
     type: z.literal("turn_failed"),
@@ -219,6 +247,7 @@ const OP_EVENT_TYPES = new Set<TurnEvent["type"]>([
   "governor_action",
   "turn_completed",
   "turn_failed",
+  "rewound",
 ]);
 
 export function isOpEvent(event: TurnEvent): boolean {

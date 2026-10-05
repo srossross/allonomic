@@ -3,6 +3,7 @@ import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import { findApiKey } from "../../common/env";
 import { invokeWithRetry } from "../retry";
 import { messageText } from "../graph/thinking";
+import { emitModelUsage, interceptorAgent } from "../turn/usage";
 import { DEFAULT_MODEL_ID } from "../../types/chat";
 import type { AgentInterceptor, ExitVerdict, PipelineContext } from "../graph/types";
 
@@ -35,6 +36,7 @@ export class ExitProbeInterceptor implements AgentInterceptor {
     const response = await invokeWithRetry(() =>
       model.invoke([...conversation, new HumanMessage(this.prompt)])
     );
+    emitModelUsage(context.events, interceptorAgent(this.name), this.modelName, response);
     context.events.emit({
       type: "governor_fork",
       interceptor: this.name,

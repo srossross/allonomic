@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import {
   type Message,
@@ -8,6 +8,7 @@ import {
   type GovernorMode,
   type ModelOption,
   type UserPromptValue,
+  type PendingPrompt,
   DEFAULT_MODEL_ID,
   DEFAULT_EXECUTION_MODE,
   DEFAULT_GOVERNOR_MODE,
@@ -21,9 +22,17 @@ import { groupExploreRuns } from "./exploreGroups";
 import { ChatComposer } from "./ChatComposer";
 import type { ComposerPhase } from "./composerPhase";
 import { useFollowScroll } from "./useFollowScroll";
-import { findPendingPrompt } from "./pendingPrompt";
 import type { QueuedPrompt } from "@/core/graph/turnControl";
 import { toggleInSet } from "@/lib/toggleInSet";
+import {
+  childrenOf,
+  EMPTY_TURN_TREE,
+  parentOf,
+  tipOf,
+  type TurnHead,
+  type TurnTree,
+} from "@/core/turn/branches";
+import { BranchSwitcher, RewoundMarker } from "./BranchRow";
 
 function turnOf(messages: Message[], presentation: Message): Message[] {
   const end = messages.indexOf(presentation);
@@ -42,6 +51,7 @@ export interface ChatPanelProps {
   phase: ComposerPhase;
   queuedPrompts?: QueuedPrompt[];
   waitingOn?: string;
+  pendingPrompt?: PendingPrompt;
   onSendMessage: (text: string) => void;
   onStopMessage?: () => void;
   toolControls?: ToolControls;
@@ -50,6 +60,11 @@ export interface ChatPanelProps {
   onRemoveQueued?: (id: string) => boolean;
   onPopQueued?: () => string | undefined;
   onRetry?: () => void;
+  turnTree?: TurnTree;
+  draft?: { text: string; nonce: number };
+  onRewind?: (turnIndex: number) => void;
+  onFork?: (turnIndex: number) => void;
+  onSwitchBranch?: (head: TurnHead) => void;
   selectedModel?: string;
   onSelectModel?: (model: string) => void;
   models?: ModelOption[];
@@ -79,6 +94,7 @@ export function ChatPanel({
   phase,
   queuedPrompts = [],
   waitingOn,
+  pendingPrompt,
   onSendMessage,
   onStopMessage,
   toolControls,
@@ -87,6 +103,11 @@ export function ChatPanel({
   onRemoveQueued,
   onPopQueued,
   onRetry,
+  turnTree = EMPTY_TURN_TREE,
+  draft,
+  onRewind,
+  onFork,
+  onSwitchBranch,
   selectedModel = DEFAULT_MODEL_ID,
   onSelectModel,
   models,
@@ -125,7 +146,6 @@ export function ChatPanel({
           content: m.content,
         }));
 
-  const pendingPrompt = findPendingPrompt(messages);
   const { scrollRef, contentRef, sentinelRef, isFollowing, hasUnseen, scrollToBottom } =
     useFollowScroll(sessionId, messages);
 
@@ -136,6 +156,8 @@ export function ChatPanel({
     rowOffsets.push(rowCount);
     rowCount += streamRowCount(message, toolItems, collapseWorkerText);
   }
+  const switchTo = (turn: number) => onSwitchBranch?.(tipOf(turnTree, turn));
+  const rewoundBranches = childrenOf(turnTree, turnTree.head);
 
   return (
     <div className="bg-background relative flex min-h-0 flex-1 flex-col">
@@ -149,39 +171,60 @@ export function ChatPanel({
             </div>
           ) : (
             <div className="space-y-1">
-              {streamItems.map(({ message, toolItems }, index) => (
-                <ChatMessageItem
-                  key={message.id}
-                  rowOffset={rowOffsets[index]}
-                  message={message}
-                  toolItems={toolItems}
-                  isThoughtExpanded={expandedThoughtIds.has(message.id)}
-                  onToggleThought={() => toggleThought(message.id)}
-                  isTextCollapsed={collapseWorkerText}
-                  isTextExpanded={expandedThoughtIds.has(`${message.id}:text`)}
-                  onToggleText={() => toggleThought(`${message.id}:text`)}
-                  presentation={
-                    message.presentation && (
-                      <PresentationView
-                        presentation={message.presentation}
-                        turn={turnOf(messages, message)}
-                        openIntents={openIntents}
-                        isActive={!loading && message === messages.at(-1)}
-                        onSend={onSendMessage}
+              {streamItems.map(({ message, toolItems }, index) => {
+                const turn = message.isQueued ? undefined : message.turnIndex;
+                const siblings =
+                  turn === undefined ? [] : childrenOf(turnTree, parentOf(turnTree, turn));
+                return (
+                  <Fragment key={message.id}>
+                    <ChatMessageItem
+                      rowOffset={rowOffsets[index]}
+                      message={message}
+                      toolItems={toolItems}
+                      isThoughtExpanded={expandedThoughtIds.has(message.id)}
+                      onToggleThought={() => toggleThought(message.id)}
+                      isTextCollapsed={collapseWorkerText}
+                      isTextExpanded={expandedThoughtIds.has(`${message.id}:text`)}
+                      onToggleText={() => toggleThought(`${message.id}:text`)}
+                      presentation={
+                        message.presentation && (
+                          <PresentationView
+                            presentation={message.presentation}
+                            turn={turnOf(messages, message)}
+                            openIntents={openIntents}
+                            isActive={!loading && message === messages.at(-1)}
+                            onSend={onSendMessage}
+                          />
+                        )
+                      }
+                      expandedToolIds={expandedToolIds}
+                      onToggleTool={toggleToolCall}
+                      toolControls={toolControls}
+                      onRetry={
+                        onRetry && !loading && message.isError && message === messages.at(-1)
+                          ? onRetry
+                          : undefined
+                      }
+                      onRewind={turn !== undefined && onRewind ? () => onRewind(turn) : undefined}
+                      onFork={turn !== undefined && onFork ? () => onFork(turn) : undefined}
+                      isRewindDisabled={loading}
+                    />
+                    {turn !== undefined && siblings.length > 1 && (
+                      <BranchSwitcher
+                        branches={siblings}
+                        active={turn}
+                        isDisabled={loading}
+                        onSelect={switchTo}
                       />
-                    )
-                  }
-                  expandedToolIds={expandedToolIds}
-                  onToggleTool={toggleToolCall}
-                  toolControls={toolControls}
-                  onRetry={
-                    onRetry && !loading && message.isError && message === messages.at(-1)
-                      ? onRetry
-                      : undefined
-                  }
-                />
-              ))}
+                    )}
+                  </Fragment>
+                );
+              })}
             </div>
+          )}
+
+          {!showContext && rewoundBranches.length > 0 && (
+            <RewoundMarker isDisabled={loading} onUndo={() => switchTo(rewoundBranches.at(-1)!)} />
           )}
 
           {loading && !pendingPrompt && (
@@ -203,6 +246,7 @@ export function ChatPanel({
             onResume={onResume}
             onRemoveQueued={onRemoveQueued}
             onPopQueued={onPopQueued}
+            draft={draft}
             onInputChange={scrollToBottom}
             selectedModel={selectedModel}
             onSelectModel={onSelectModel}

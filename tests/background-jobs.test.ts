@@ -98,23 +98,33 @@ describe("BackgroundJobs", () => {
 });
 
 describe("background shell tool", () => {
-  it("starts a job, returns the log path once wait_for matches, and kills it", async () => {
+  it("starts a job, returns startup output, reads later output, and kills it", async () => {
     const runtime = createMemoryRuntime();
     const shell = new ScriptedShell(undefined, false);
     runtime.shell = shell;
     const tools = createAgentTools(runtime, "/w", "god");
     expect(tools.map((t) => t.name)).not.toContain("shell_job_output");
     const level4 = tools.find((t) => t.name === "shell_4_full_access")!;
-    const pending = level4.invoke({ command: "serve", background: true, wait_for: "ready" });
+    const pending = level4.invoke({
+      command: "serve",
+      background: true,
+      background_startup_ms: 50,
+    });
     await Bun.sleep(10);
-    shell.spawned[0].process.emit("stdout", "ready\n");
+    shell.spawned[0].process.emit("stdout", "booting\n");
     const result = String(await pending);
     const logPath = /output in (\S+)\]/.exec(result)?.[1];
     expect(logPath).toMatch(/^\/private\/tmp\/at-sandbox\/[0-9a-f]{8}\/jobs\/default\/job-1\.log$/);
     expect(result).toBe(
-      `Started background job job-1.\nready\n[job-1 running; output in ${logPath}]`
+      `Started background job job-1.\nbooting\n[job-1 running; output in ${logPath}]`
     );
-    expect(await runtime.fs.readText(logPath!)).toBe("ready\n");
+
+    shell.spawned[0].process.emit("stdout", "ready\n");
+    const read = tools.find((t) => t.name === "read_shell")!;
+    expect(await read.invoke({ call_id: "job-1" })).toBe(
+      `booting\nready\n[job-1 running; output in ${logPath}]`
+    );
+    expect(await read.invoke({ call_id: "local-1", lines: "2" })).toBe("L2: ready");
 
     const kill = tools.find((t) => t.name === "shell_job_kill")!;
     expect(await kill.invoke({ job_id: "job-1" })).toBe(`[job-1 killed; output in ${logPath}]`);

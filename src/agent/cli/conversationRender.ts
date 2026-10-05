@@ -154,8 +154,8 @@ function renderAssumption(assumption: Assumption): string {
     assumption.depends_on && `depends_on:${assumption.depends_on}`,
     assumption.resolver,
     assumption.impact_category,
-    `candidates:${assumption.candidates}`,
-    `cost:${assumption.impact_cost}`,
+    assumption.candidates && `candidates:${assumption.candidates}`,
+    assumption.impact_cost && `cost:${assumption.impact_cost}`,
     assumption.user_would_care !== null &&
       (assumption.user_would_care ? "user-would-care" : "user-would-not-care"),
   ]

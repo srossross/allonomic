@@ -7,10 +7,19 @@ import type { BaseMessage } from "@langchain/core/messages";
 import type { FileStore } from "../ports";
 import type { RehydratedSession, SessionLoadError, SessionMetadata } from "../../types/persistence";
 import { loadSessionMetadata, saveSessionMetadata, sessionDirFor } from "./metadata";
-import { appendTurnEvent, loadSessionTurns, nextTurnIndexAfter } from "../turn/turnFiles";
-import { foldTurnEvents } from "../turn/transcript";
+import {
+  appendSegmentEvents,
+  appendTurnEvent,
+  loadSessionTurns,
+  nextTurnIndexAfter,
+  segmentFileName,
+  turnDirFor,
+} from "../turn/turnFiles";
+import { foldTurnEvents, emptyTranscript, type Transcript } from "../turn/transcript";
+import { join } from "../paths";
+import { activeEvents, activePath, buildTurnTree, type TurnHead } from "../turn/branches";
 import { replayWorkerMessages } from "../turn/ops";
-import { WORKER_ACTOR, type RecoverableCall, type TurnEvent } from "../turn/events";
+import { USER_ACTOR, WORKER_ACTOR, type RecoverableCall, type TurnEvent } from "../turn/events";
 import { applyGovernorAction, EMPTY_GOVERNOR_STATE } from "../governor/reducer";
 import type { GovernorState } from "../governor/types";
 import { createLogger } from "../log";
@@ -36,7 +45,7 @@ async function loadOrCreateMetadata(
 }
 
 function isTerminal(event: TurnEvent): boolean {
-  return event.type === "turn_completed" || event.type === "turn_failed";
+  return ["turn_completed", "turn_failed", "rewound"].includes(event.type);
 }
 
 async function closeUnfinishedTurn(
@@ -107,11 +116,12 @@ export async function loadWorkerMessages(
   beforeTurn: number
 ): Promise<BaseMessage[]> {
   const { events } = await loadSessionTurns(fs, sessionDir, failOnTurnError, beforeTurn - 1);
-  return replayWorkerMessages(events);
+  return replayWorkerMessages(activeEvents(events));
 }
 
 export interface SessionReplay {
   events: TurnEvent[];
+  activeEvents: TurnEvent[];
   nextTurnIndex: number;
   loadErrors: SessionLoadError[];
   unansweredCalls: RecoverableCall[];
@@ -125,12 +135,19 @@ export async function replaySession(fs: FileStore, sessionDir: string): Promise<
   });
   const closed = await closeUnfinishedTurn(fs, sessionDir, turnNumbers, events);
   const allEvents = closed ? [...events, closed] : events;
+  const active = activeEvents(allEvents);
   return {
     events: allEvents,
+    activeEvents: active,
     nextTurnIndex: nextTurnIndexAfter(turnNumbers),
     loadErrors,
-    unansweredCalls: findUnansweredCalls(allEvents),
+    unansweredCalls: findUnansweredCalls(active),
   };
+}
+
+export function foldSession(events: TurnEvent[]): Transcript {
+  const turnTree = buildTurnTree(events);
+  return foldTurnEvents(activeEvents(events, turnTree), { ...emptyTranscript(), turnTree });
 }
 
 export async function rehydrateSession(
@@ -139,6 +156,51 @@ export async function rehydrateSession(
   sessionId: string
 ): Promise<RehydratedSession> {
   const metadata = await loadOrCreateMetadata(fs, workspaceDir, sessionId);
-  const { events, ...replay } = await replaySession(fs, sessionDirFor(workspaceDir, sessionId));
-  return { metadata, ...foldTurnEvents(events), ...replay };
+  const { events, nextTurnIndex, loadErrors, unansweredCalls } = await replaySession(
+    fs,
+    sessionDirFor(workspaceDir, sessionId)
+  );
+  return { metadata, ...foldSession(events), nextTurnIndex, loadErrors, unansweredCalls };
+}
+
+export async function rewindSession(
+  fs: FileStore,
+  sessionDir: string,
+  head: TurnHead
+): Promise<number> {
+  const { turnNumbers } = await loadSessionTurns(fs, sessionDir, failOnTurnError);
+  const turnIndex = nextTurnIndexAfter(turnNumbers);
+  const event: TurnEvent = {
+    type: "rewound",
+    head,
+    seq: 0,
+    at: new Date().toISOString(),
+    turnIndex,
+    actor: USER_ACTOR,
+  };
+  const turnDir = turnDirFor(sessionDir, turnIndex);
+  await fs.mkdir(turnDir);
+  await appendSegmentEvents(fs, join(turnDir, segmentFileName(0, USER_ACTOR)), [event]);
+  return turnIndex + 1;
+}
+
+export async function copyActivePath(
+  fs: FileStore,
+  fromDir: string,
+  toDir: string,
+  head: TurnHead
+): Promise<number> {
+  const { events } = await loadSessionTurns(fs, fromDir, failOnTurnError);
+  const path = activePath(buildTurnTree(events), head);
+  for (const [index, turn] of path.entries()) {
+    const turnIndex = index + 1;
+    const turnDir = turnDirFor(toDir, turnIndex);
+    await fs.mkdir(turnDir);
+    await appendSegmentEvents(
+      fs,
+      join(turnDir, segmentFileName(0, WORKER_ACTOR)),
+      events.filter((e) => e.turnIndex === turn).map((e) => ({ ...e, turnIndex }))
+    );
+  }
+  return path.length;
 }
